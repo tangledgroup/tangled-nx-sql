@@ -1,11 +1,36 @@
 [project]
 name = "tangled-nx-sql"
 version = "0.1.0"
-requires-python = ">=3.14"
+description = "NetworkX backend with persistent SQL storage — zero in-memory footprint, full NetworkX API compatibility"
+readme = "README.md"
+requires-python = ">=3.10,<4.0"
+license = "MIT"
+authors = [
+    { name = "Tangled", email = "noreply@tangledgroup.com" },
+    { name = "Marko Tasic", email = "mtasic85@gmail.com" },
+]
+keywords = ["networkx", "sqlalchemy", "graph-database", "sql", "orm"]
+classifiers = [
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+]
+
 dependencies = [
     "networkx[default]>=3.6.1",
     "sqlalchemy>=2.0.49",
 ]
+
+[project.urls]
+# Homepage = "https://example.com"
+# Documentation = "https://readthedocs.org"
+Repository = "https://github.com/tangledgroup/tangled-nx-sql"
+Issues = "https://github.com/tangledgroup/tangled-nx-sql/issues"
+Changelog = "https://github.com/tangledgroup/tangled-nx-sql/blob/main/CHANGELOG.md"
 
 [dependency-groups]
 dev = [
@@ -13,3 +38,18 @@ dev = [
     "ruff>=0.15.11",
     "ty>=0.0.31",
 ]
+
+[tool.ruff]
+target-version = "py310"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "N", "UP", "B"]
+ignore = ["E501"]
+
+[tool.ty.environment]
+python-version = "3.10"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-v --tb=short"
