@@ -326,7 +326,29 @@ class _AdjacencyDict(collections.abc.MutableMapping):
         )
 
     def __setitem__(self, key, value):
-        raise NotImplementedError("Direct G.adj assignment not supported")
+        """Handle NetworkX internal: self._adj[node] = {} during add_node."""
+        if isinstance(value, dict) and not self._multi:
+            # NetworkX internal: adding a new node
+            norm = _to_hashable(key)
+            dbkey = _db_node_key(norm)
+            existing_id = self._session.scalar(
+                select(NodeModel.node_id).where(
+                    and_(
+                        NodeModel.graph_id == self._graph_id,
+                        NodeModel.node_key == dbkey,
+                    )
+                )
+            )
+            if existing_id is None:
+                node = NodeModel(
+                    graph_id=self._graph_id,
+                    node_key=dbkey,
+                    attributes={},
+                )
+                self._session.add(node)
+                self._session.flush()
+        else:
+            raise NotImplementedError("Direct G.adj assignment not supported")
 
     def __delitem__(self, key):
         raise NotImplementedError("Direct G.adj deletion not supported")
@@ -383,6 +405,24 @@ class _NXSQLBase(nx.Graph):
             directed=self._directed,
             multi=self._multigraph,
         )
+
+    def add_node(self, node_for_adding, **attr):
+        """Normalize node key so NetworkX stores the hashable form."""
+        norm = _to_hashable(node_for_adding)
+        super().add_node(norm, **attr)
+
+    def add_nodes_from(self, nodes_for_adding, **attr):
+        normed = [_to_hashable(n) for n in nodes_for_adding]
+        super().add_nodes_from(normed, **attr)
+
+    def add_edge(self, u_of_edge, v_of_edge, **attr):
+        nu = _to_hashable(u_of_edge)
+        nv = _to_hashable(v_of_edge)
+        super().add_edge(nu, nv, **attr)
+
+    def add_edges_from(self, ebunch_to_add, **attr):
+        normed = [(_to_hashable(u), _to_hashable(v), d) for u, v, d in ebunch_to_add]
+        super().add_edges_from(normed, **attr)
 
     def __networkx_backend__(self) -> str:
         return "nx_sql"

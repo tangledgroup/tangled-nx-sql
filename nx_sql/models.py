@@ -48,7 +48,6 @@ class Node(Base):
     )
 
     __table_args__ = (
-        Index("ix_nodes_graph_id", "graph_id"),
         Index(  # enforces uniqueness per graph + fast lookup by node value
             "ix_nodes_graph_key_unique",
             "graph_id",
@@ -84,6 +83,4 @@ class Edge(Base):
 
     __table_args__ = (
         Index("ix_edges_lookup", "graph_id", "source_id", "target_id", "key"),
-        Index("ix_edges_graph_source", "graph_id", "source_id"),
-        Index("ix_edges_graph_target", "graph_id", "target_id"),
     )
