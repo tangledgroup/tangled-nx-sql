@@ -12,7 +12,7 @@ Base.metadata.create_all(engine)
 SessionLocal = sessionmaker(bind=engine)
 
 with SessionLocal() as session:
-    G = nx_sql.Graph(session)
+    G = nx_sql.Graph(session, name="ndarray_demo")
 
     G.add_node(np.array([1.0, 2.0, 3.0]), color="red")      # ← works!
     G.add_node([4.0, 5.0])                                    # ← works!

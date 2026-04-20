@@ -598,22 +598,29 @@ class _NXSQLBase(nx.Graph):
     def __init__(
         self,
         session: Session,
-        graph_id: uuid.UUID | None = None,
+        name: str | None = None,
         incoming_graph_data=None,
         **attr,
     ) -> None:
         self.session = session
 
-        if graph_id is None:
+        if name is not None:
+            gmodel = self.session.scalar(
+                select(GraphModel).where(GraphModel.name == name)
+            )
+            if gmodel:
+                self.graph_id = gmodel.graph_id
+                attr = {**gmodel.attributes, **attr} if gmodel.attributes else attr
+            else:
+                gmodel = GraphModel(name=name, graph_type=self._graph_type, attributes=attr or {})
+                self.session.add(gmodel)
+                self.session.commit()
+                self.graph_id = gmodel.graph_id
+        else:
             gmodel = GraphModel(graph_type=self._graph_type, attributes=attr or {})
             self.session.add(gmodel)
             self.session.commit()
             self.graph_id = gmodel.graph_id
-        else:
-            self.graph_id = graph_id
-            gmodel = self.session.get(GraphModel, graph_id)
-            if gmodel and gmodel.attributes:
-                attr = {**gmodel.attributes, **attr}
 
         super().__init__(incoming_graph_data=incoming_graph_data, **attr)
 

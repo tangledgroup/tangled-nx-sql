@@ -14,7 +14,7 @@ SessionLocal = sessionmaker(bind=engine)
 def demo0():
     print('demo0')
     with SessionLocal() as session:
-        G = nx_sql.DiGraph(session)
+        G = nx_sql.DiGraph(session, name="demo0")
         G.add_edge('A', 'B', weight=0.1)
         G.add_edge('B', 'C', weight=0.1)
         G.add_edge('C', 'D', weight=0.1)
@@ -30,7 +30,7 @@ def demo0():
 def demo1():
     print('demo1')
     with SessionLocal() as session:
-        G = nx_sql.DiGraph(session)
+        G = nx_sql.DiGraph(session, name="demo1")
         G.add_edge('A', 'B', weight=0.1)
         G.add_edge('B', 'C', weight=0.1)
         G.add_edge('C', 'D', weight=0.1)

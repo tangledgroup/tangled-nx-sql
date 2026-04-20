@@ -12,7 +12,7 @@ class Base(DeclarativeBase):
 
 
 class Graph(Base):
-    """Unchanged from the very first version."""
+    """Graph record with optional user-provided name."""
 
     __tablename__ = "graphs"
 
@@ -21,6 +21,7 @@ class Graph(Base):
         primary_key=True,
         default=lambda: uuid.uuid7(),
     )
+    name: Mapped[str | None] = mapped_column(String(128), unique=True, nullable=True)
     graph_type: Mapped[str] = mapped_column(String(20), nullable=False)
     attributes: Mapped[dict[str, Any] | None] = mapped_column(
         JSON, nullable=True, default=dict
