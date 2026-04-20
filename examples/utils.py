@@ -17,6 +17,7 @@ def print_docstring(func: F) -> F:
             print(f"\n{'─' * 60}")
             print(f"📝 {func.__name__}: {func.__doc__.strip()}")
             print("─" * 60)
+
         return func(*args, **kwargs)
 
     @functools.wraps(func)
@@ -25,8 +26,10 @@ def print_docstring(func: F) -> F:
             print(f"\n{'─' * 60}")
             print(f"📝 {func.__name__}: {func.__doc__.strip()}")
             print("─" * 60)
+
         return await func(*args, **kwargs)
 
     if asyncio.iscoroutinefunction(func):
         return wrapper_async  # type: ignore[return-value]
+
     return wrapper_sync  # type: ignore[return-value]

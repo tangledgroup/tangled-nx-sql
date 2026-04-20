@@ -11,14 +11,14 @@ from examples.utils import print_docstring
 
 engine = create_engine("sqlite:///nx_sql.db")
 Base.metadata.create_all(engine)
-SessionLocal = sessionmaker(bind=engine)
+Session = sessionmaker(bind=engine)
 
 
 @print_docstring
 def demo0():
     """Demo 0"""
 
-    with SessionLocal() as session:
+    with Session() as session:
         G = nx_sql.DiGraph(session, name="demo0")
         G.add_edge('A1', 'B1', weight=0.1, marriage="stable")
         G.add_edge('B1', 'C1', weight=0.1, marriage="stable")
@@ -39,7 +39,7 @@ def demo0():
 def demo1():
     """Demo 1"""
 
-    with SessionLocal() as session:
+    with Session() as session:
         G = nx_sql.DiGraph(session, name="demo1")
         G.add_edge('A2', 'B2', weight=0.1, marriage="unstable")
         G.add_edge('B2', 'C2', weight=0.1, marriage="unstable")
