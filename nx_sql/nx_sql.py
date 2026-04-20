@@ -86,6 +86,9 @@ class _NodeDict(collections.abc.MutableMapping):
         ) is not None
 
         if exists:
+            # Check if this is an empty dict (NetworkX internal initialization)
+            # or a real update. If attrs is empty, we still need to handle the case
+            # where NetworkX will do attr_dict.update(attr) right after.
             self._session.execute(
                 update(NodeModel)
                 .where(
@@ -131,187 +134,27 @@ class _NodeDict(collections.abc.MutableMapping):
         return self._session.scalar(stmt) or 0
 
 
-class _MultiInnerAdjDict(collections.abc.MutableMapping):
-    """Inner adjacency for MultiGraph/MultiDiGraph: target → {key: attrs}.
-
-    For multi-edges, NetworkX expects inner dicts to support integer keys
-    (0, 1, 2, ...) representing edge indices. We auto-assign keys in the DB
-    and present them as integer keys to match NX API.
-    """
-
-    def __init__(
-        self,
-        session: Session,
-        graph_id: uuid.UUID,
-        source_id: uuid.UUID | None,
-        directed: bool,
-    ) -> None:
-        self._session = session
-        self._graph_id = graph_id
-        self._source_id = source_id
-        self._directed = directed
-        self._cache: dict[str, list[tuple[str | None, dict[str, Any]]]] | None = None
-
-    def _load_cache(self) -> None:
-        """Load all edges from source to target_id into cache."""
-        if self._source_id is None:
-            self._cache = []
-            return
-        stmt = (
-            select(EdgeModel.key, EdgeModel.attributes)
-            .where(
-                and_(
-                    EdgeModel.graph_id == self._graph_id,
-                    EdgeModel.source_id == self._source_id,
-                )
-            )
-            .order_by(EdgeModel.edge_id)
-        )
-        self._cache = [
-            (key, attrs or {})
-            for key, attrs in self._session.execute(stmt)
-        ]
-
-    def _get_or_create_target_id(self, target: Any) -> uuid.UUID:
-        norm = _to_hashable(target)
-        dbkey = _db_node_key(norm)
-        target_id = self._session.scalar(
-            select(NodeModel.node_id).where(
-                and_(
-                    NodeModel.graph_id == self._graph_id,
-                    NodeModel.node_key == dbkey,
-                )
-            )
-        )
-        if target_id is None:
-            new_node = NodeModel(
-                graph_id=self._graph_id,
-                node_key=dbkey,
-                attributes={},
-            )
-            self._session.add(new_node)
-            self._session.flush()
-            target_id = new_node.node_id
-        return target_id
-
-    def __getitem__(self, target: Any) -> dict[str, Any]:
-        """Return attrs for edge with key=target."""
-        if self._source_id is None:
-            raise KeyError(target)
-        # NetworkX multi-edge keys are ints; we store them as strings in DB
-        key = str(target) if not isinstance(target, str) else target
-        self._load_cache()
-        for k, attrs in self._cache:
-            if k == key:
-                return attrs
-        raise KeyError(target)
-
-    def __setitem__(self, target: Any, attrs: dict[str, Any] | None) -> None:
-        """Set edge with key=target. For multi-edges, NetworkX passes (v, key)."""
-        # This path is used when NX does self._adj[u][v][key] = data
-        # But our inner dict maps target→{key:attrs}, so target here is the key
-        # and we need to know the actual target node differently.
-        # In practice, NX calls this via self._adj[u][v] = {} first (create),
-        # then self._adj[u][v][key] = data.
-        raise NotImplementedError("Multi-edge setitem via inner dict")
-
-    def __delitem__(self, target: Any) -> None:
-        if self._source_id is None:
-            return
-        key = str(target) if not isinstance(target, str) else target
-        self._session.execute(
-            delete(EdgeModel).where(
-                and_(
-                    EdgeModel.graph_id == self._graph_id,
-                    EdgeModel.source_id == self._source_id,
-                    EdgeModel.key == key,
-                )
-            )
-        )
-        if not self._directed:
-            # Also delete reverse edge
-            self._session.execute(
-                delete(EdgeModel).where(
-                    and_(
-                        EdgeModel.graph_id == self._graph_id,
-                        EdgeModel.target_id == self._source_id,
-                        EdgeModel.key == key,
-                    )
-                )
-            )
-        self._cache = None
-
-    def __iter__(self):
-        """Yield integer edge keys for edges from source to any target."""
-        if self._source_id is None:
-            return
-        self._load_cache()
-        if self._cache:
-            for i, (key, _) in enumerate(self._cache):
-                yield i
-
-    def __len__(self) -> int:
-        if self._source_id is None:
-            return 0
-        stmt = (
-            select(func.count())
-            .select_from(EdgeModel)
-            .where(
-                and_(
-                    EdgeModel.graph_id == self._graph_id,
-                    EdgeModel.source_id == self._source_id,
-                )
-            )
-        )
-        return self._session.scalar(stmt) or 0
-
-
 class _SimpleInnerAdjDict(collections.abc.MutableMapping):
     """Inner adjacency for Graph / DiGraph (non-multi)."""
 
     def __init__(
-        self,
-        session: Session,
-        graph_id: uuid.UUID,
-        source_id: uuid.UUID | None,
-        directed: bool,
+        self, session: Session, graph_id: uuid.UUID, source_id: uuid.UUID, directed: bool
     ) -> None:
         self._session = session
         self._graph_id = graph_id
         self._source_id = source_id
         self._directed = directed
-        self._source_ids: list[uuid.UUID] | None = None
-
-    @classmethod
-    def from_source_ids(
-        cls, session: Session, graph_id: uuid.UUID, source_ids: list[uuid.UUID], directed: bool
-    ) -> "_SimpleInnerAdjDict":
-        """Create a virtual inner dict for multiple source nodes (used by _pred)."""
-        instance = cls(session, graph_id, None, directed)
-        instance._source_ids = source_ids
-        return instance
 
     def __getitem__(self, target: Any) -> dict[str, Any]:
         target_id = self._resolve_target_id(target)
-        if self._source_ids is not None:
-            # Multi-source: check all source nodes
-            stmt = select(EdgeModel.attributes).where(
-                and_(
-                    EdgeModel.graph_id == self._graph_id,
-                    EdgeModel.source_id.in_(self._source_ids),
-                    EdgeModel.target_id == target_id,
-                    EdgeModel.key.is_(None),
-                )
+        stmt = select(EdgeModel.attributes).where(
+            and_(
+                EdgeModel.graph_id == self._graph_id,
+                EdgeModel.source_id == self._source_id,
+                EdgeModel.target_id == target_id,
+                EdgeModel.key.is_(None),
             )
-        else:
-            stmt = select(EdgeModel.attributes).where(
-                and_(
-                    EdgeModel.graph_id == self._graph_id,
-                    EdgeModel.source_id == self._source_id,
-                    EdgeModel.target_id == target_id,
-                    EdgeModel.key.is_(None),
-                )
-            )
+        )
         attrs = self._session.scalar(stmt)
         if attrs is None:
             raise KeyError(target)
@@ -322,80 +165,37 @@ class _SimpleInnerAdjDict(collections.abc.MutableMapping):
         self._upsert_edge(target_id, attrs or {})
 
     def __delitem__(self, target: Any) -> None:
-        try:
-            target_id = self._resolve_target_id(target)
-        except KeyError:
-            # Node may have already been deleted (e.g. during remove_node
-            # where _node is deleted before edges). Safe to silently skip.
-            return
+        target_id = self._resolve_target_id(target)
         self._delete_edge(target_id)
 
     def __iter__(self):
-        if self._source_ids is not None:
-            target_ids_stmt = (
-                select(EdgeModel.target_id)
-                .where(
-                    and_(
-                        EdgeModel.graph_id == self._graph_id,
-                        EdgeModel.source_id.in_(self._source_ids),
-                        EdgeModel.key.is_(None),
-                    )
+        stmt = (
+            select(NodeModel.node_key)
+            .select_from(EdgeModel)
+            .join(NodeModel, NodeModel.node_id == EdgeModel.target_id)
+            .where(
+                and_(
+                    EdgeModel.graph_id == self._graph_id,
+                    EdgeModel.source_id == self._source_id,
+                    EdgeModel.key.is_(None),
                 )
             )
-            target_ids = [row[0] for row in self._session.execute(target_ids_stmt)]
-            if target_ids:
-                node_stmt = (
-                    select(NodeModel.node_key)
-                    .where(
-                        and_(
-                            NodeModel.graph_id == self._graph_id,
-                            NodeModel.node_id.in_(target_ids),
-                        )
-                    )
-                )
-                for (dbkey,) in self._session.execute(node_stmt):
-                    yield _deserialize_node_key(dbkey)
-        else:
-            stmt = (
-                select(NodeModel.node_key)
-                .select_from(EdgeModel)
-                .join(NodeModel, NodeModel.node_id == EdgeModel.target_id)
-                .where(
-                    and_(
-                        EdgeModel.graph_id == self._graph_id,
-                        EdgeModel.source_id == self._source_id,
-                        EdgeModel.key.is_(None),
-                    )
-                )
-            )
-            for (dbkey,) in self._session.execute(stmt):
-                yield _deserialize_node_key(dbkey)
+        )
+        for (dbkey,) in self._session.execute(stmt):
+            yield _deserialize_node_key(dbkey)
 
     def __len__(self) -> int:
-        if self._source_ids is not None:
-            stmt = (
-                select(func.count())
-                .select_from(EdgeModel)
-                .where(
-                    and_(
-                        EdgeModel.graph_id == self._graph_id,
-                        EdgeModel.source_id.in_(self._source_ids),
-                        EdgeModel.key.is_(None),
-                    )
+        stmt = (
+            select(func.count())
+            .select_from(EdgeModel)
+            .where(
+                and_(
+                    EdgeModel.graph_id == self._graph_id,
+                    EdgeModel.source_id == self._source_id,
+                    EdgeModel.key.is_(None),
                 )
             )
-        else:
-            stmt = (
-                select(func.count())
-                .select_from(EdgeModel)
-                .where(
-                    and_(
-                        EdgeModel.graph_id == self._graph_id,
-                        EdgeModel.source_id == self._source_id,
-                        EdgeModel.key.is_(None),
-                    )
-                )
-            )
+        )
         return self._session.scalar(stmt) or 0
 
     def _resolve_target_id(self, target: Any) -> uuid.UUID:
@@ -496,6 +296,294 @@ class _SimpleInnerAdjDict(collections.abc.MutableMapping):
         )
 
 
+class _PredAdjacencyDict(collections.abc.MutableMapping):
+    """G._pred – predecessor adjacency for DiGraph.
+
+    For a directed edge u -> v, node v has u as a predecessor.
+    This is the reverse view of _adj (successors).
+    """
+
+    def __init__(self, session: Session, graph_id: uuid.UUID) -> None:
+        self._session = session
+        self._graph_id = graph_id
+
+    def __getitem__(self, source: Any) -> dict[str, Any]:
+        """Get predecessors of source node."""
+        norm = _to_hashable(source)
+        dbkey = _db_node_key(norm)
+        source_id = self._session.scalar(
+            select(NodeModel.node_id).where(
+                and_(
+                    NodeModel.graph_id == self._graph_id,
+                    NodeModel.node_key == dbkey,
+                )
+            )
+        )
+        if source_id is None:
+            raise KeyError(source)
+
+        # Find all edges where target_id == source_id (i.e., predecessors)
+        stmt = select(EdgeModel.attributes, EdgeModel.source_id).where(
+            and_(
+                EdgeModel.graph_id == self._graph_id,
+                EdgeModel.target_id == source_id,
+                EdgeModel.key.is_(None),
+            )
+        )
+        result: dict[str, Any] = {}
+        for attrs, src_id in self._session.execute(stmt):
+            # Get the node key for this predecessor
+            node_stmt = select(NodeModel.node_key).where(
+                and_(
+                    NodeModel.graph_id == self._graph_id,
+                    NodeModel.node_id == src_id,
+                )
+            )
+            (node_dbkey,) = self._session.execute(node_stmt).one()
+            pred_node = _deserialize_node_key(node_dbkey)
+            result[pred_node] = attrs or {}
+        return result
+
+    def __setitem__(self, key, value):
+        """Handle NetworkX internal: self._pred[node] = {} during add_node."""
+        if isinstance(value, dict):
+            norm = _to_hashable(key)
+            dbkey = _db_node_key(norm)
+            # Ensure the node exists in DB
+            existing_id = self._session.scalar(
+                select(NodeModel.node_id).where(
+                    and_(
+                        NodeModel.graph_id == self._graph_id,
+                        NodeModel.node_key == dbkey,
+                    )
+                )
+            )
+            if existing_id is None:
+                node = NodeModel(
+                    graph_id=self._graph_id,
+                    node_key=dbkey,
+                    attributes={},
+                )
+                self._session.add(node)
+                self._session.flush()
+
+    def __delitem__(self, key):
+        raise NotImplementedError("Direct G._pred deletion not supported")
+
+    def __iter__(self):
+        """Iterate over all nodes (predecessors exist for all nodes that have incoming edges)."""
+        stmt = select(NodeModel.node_key).where(NodeModel.graph_id == self._graph_id)
+        for (dbkey,) in self._session.execute(stmt):
+            yield _deserialize_node_key(dbkey)
+
+    def __len__(self) -> int:
+        stmt = (
+            select(func.count())
+            .select_from(NodeModel)
+            .where(NodeModel.graph_id == self._graph_id)
+        )
+        return self._session.scalar(stmt) or 0
+
+
+class _MultiInnerAdjDict(collections.abc.MutableMapping):
+    """Inner adjacency for MultiGraph/MultiDiGraph.
+
+    Maps target → {key: edge_data} where key is an int edge identifier.
+    Each edge is stored as a separate EdgeModel row with a unique key.
+    """
+
+    def __init__(
+        self, session: Session, graph_id: uuid.UUID, source_id: uuid.UUID, directed: bool
+    ) -> None:
+        self._session = session
+        self._graph_id = graph_id
+        self._source_id = source_id
+        self._directed = directed
+
+    def __getitem__(self, target: Any) -> dict[str, Any]:
+        target_id = self._resolve_target_id(target)
+        stmt = select(EdgeModel.attributes, EdgeModel.key).where(
+            and_(
+                EdgeModel.graph_id == self._graph_id,
+                EdgeModel.source_id == self._source_id,
+                EdgeModel.target_id == target_id,
+            )
+        )
+        result: dict[str, Any] = {}
+        for attrs, key in self._session.execute(stmt):
+            k = int(key) if key is not None else 0
+            result[k] = attrs or {}
+        return result
+
+    def __setitem__(self, target: Any, attrs: dict[str, Any]) -> None:
+        """Not used directly in multi-graph add_edge flow."""
+        raise NotImplementedError("Use add_edge with key parameter for MultiGraph")
+
+    def __delitem__(self, target: Any) -> None:
+        """Delete all edges between source and target."""
+        target_id = self._resolve_target_id(target)
+        self._session.execute(
+            delete(EdgeModel).where(
+                and_(
+                    EdgeModel.graph_id == self._graph_id,
+                    EdgeModel.source_id == self._source_id,
+                    EdgeModel.target_id == target_id,
+                )
+            )
+        )
+        if not self._directed:
+            # Also remove reverse edges
+            target_node_stmt = select(NodeModel.node_id).where(
+                and_(
+                    NodeModel.graph_id == self._graph_id,
+                    NodeModel.node_key == _db_node_key(_to_hashable(target)),
+                )
+            )
+            tid = self._session.scalar(target_node_stmt)
+            if tid:
+                self._session.execute(
+                    delete(EdgeModel).where(
+                        and_(
+                            EdgeModel.graph_id == self._graph_id,
+                            EdgeModel.source_id == tid,
+                            EdgeModel.target_id == self._source_id,
+                        )
+                    )
+                )
+
+    def __iter__(self):
+        stmt = (
+            select(NodeModel.node_key)
+            .select_from(EdgeModel)
+            .join(NodeModel, NodeModel.node_id == EdgeModel.target_id)
+            .where(
+                and_(
+                    EdgeModel.graph_id == self._graph_id,
+                    EdgeModel.source_id == self._source_id,
+                )
+            )
+        )
+        for (dbkey,) in self._session.execute(stmt):
+            yield _deserialize_node_key(dbkey)
+
+    def __len__(self) -> int:
+        stmt = (
+            select(func.count())
+            .select_from(EdgeModel)
+            .where(
+                and_(
+                    EdgeModel.graph_id == self._graph_id,
+                    EdgeModel.source_id == self._source_id,
+                )
+            )
+        )
+        return self._session.scalar(stmt) or 0
+
+    def __contains__(self, target: Any) -> bool:
+        try:
+            self._resolve_target_id(target)
+            return True
+        except KeyError:
+            return False
+
+    def get(self, target, default=None):
+        try:
+            return self[target]
+        except KeyError:
+            return default
+
+    def _resolve_target_id(self, target: Any) -> uuid.UUID:
+        norm = _to_hashable(target)
+        dbkey = _db_node_key(norm)
+        target_id = self._session.scalar(
+            select(NodeModel.node_id).where(
+                and_(
+                    NodeModel.graph_id == self._graph_id,
+                    NodeModel.node_key == dbkey,
+                )
+            )
+        )
+        if target_id is None:
+            raise KeyError(target)
+        return target_id
+
+    def _get_or_create_target_id(self, target: Any) -> uuid.UUID:
+        norm = _to_hashable(target)
+        dbkey = _db_node_key(norm)
+        target_id = self._session.scalar(
+            select(NodeModel.node_id).where(
+                and_(
+                    NodeModel.graph_id == self._graph_id,
+                    NodeModel.node_key == dbkey,
+                )
+            )
+        )
+        if target_id is None:
+            new_node = NodeModel(
+                graph_id=self._graph_id,
+                node_key=dbkey,
+                attributes={},
+            )
+            self._session.add(new_node)
+            self._session.flush()
+            target_id = new_node.node_id
+        return target_id
+
+    def _upsert_edge(self, target: Any, key: int, attrs: dict[str, Any]) -> uuid.UUID:
+        """Add or update a multi-edge. Returns the edge's source_id (self._source_id)."""
+        target_id = self._get_or_create_target_id(target)
+
+        # Check if edge with this key already exists
+        existing = self._session.scalar(
+            select(EdgeModel.edge_id).where(
+                and_(
+                    EdgeModel.graph_id == self._graph_id,
+                    EdgeModel.source_id == self._source_id,
+                    EdgeModel.target_id == target_id,
+                    EdgeModel.key == str(key),
+                )
+            )
+        ) is not None
+
+        if existing:
+            self._session.execute(
+                update(EdgeModel)
+                .where(
+                    and_(
+                        EdgeModel.graph_id == self._graph_id,
+                        EdgeModel.source_id == self._source_id,
+                        EdgeModel.target_id == target_id,
+                        EdgeModel.key == str(key),
+                    )
+                )
+                .values(attributes=attrs)
+            )
+        else:
+            self._session.add(
+                EdgeModel(
+                    graph_id=self._graph_id,
+                    source_id=self._source_id,
+                    target_id=target_id,
+                    key=str(key),
+                    attributes=attrs,
+                )
+            )
+
+        # For undirected graphs, also add reverse edge
+        if not self._directed:
+            self._session.add(
+                EdgeModel(
+                    graph_id=self._graph_id,
+                    source_id=target_id,
+                    target_id=self._source_id,
+                    key=str(key),
+                    attributes=attrs,
+                )
+            )
+
+        return self._source_id
+
+
 class _AdjacencyDict(collections.abc.MutableMapping):
     """G._adj – source → inner adjacency dict"""
 
@@ -523,8 +611,9 @@ class _AdjacencyDict(collections.abc.MutableMapping):
 
         if self._multi:
             return _MultiInnerAdjDict(
-                self._session, self._graph_id, source_id, self._directed,
+                self._session, self._graph_id, source_id, self._directed
             )
+
         return _SimpleInnerAdjDict(
             self._session, self._graph_id, source_id, self._directed
         )
@@ -532,7 +621,6 @@ class _AdjacencyDict(collections.abc.MutableMapping):
     def __setitem__(self, key, value):
         """Handle NetworkX internal: self._adj[node] = {} during add_node."""
         if isinstance(value, dict):
-            # NetworkX internal: adding a new node (works for both simple and multi)
             norm = _to_hashable(key)
             dbkey = _db_node_key(norm)
             existing_id = self._session.scalar(
@@ -551,303 +639,21 @@ class _AdjacencyDict(collections.abc.MutableMapping):
                 )
                 self._session.add(node)
                 self._session.flush()
-
-    def __delitem__(self, key):
-        # Allow deletion of adjacency entries (needed for remove_node, etc.)
-        norm = _to_hashable(key)
-        dbkey = _db_node_key(norm)
-        source_id = self._session.scalar(
-            select(NodeModel.node_id).where(
-                and_(
-                    NodeModel.graph_id == self._graph_id,
-                    NodeModel.node_key == dbkey,
-                )
-            )
-        )
-        if source_id is not None:
-            # Delete all edges from this node (including multi-edges)
-            self._session.execute(
-                delete(EdgeModel).where(
-                    and_(
-                        EdgeModel.graph_id == self._graph_id,
-                        EdgeModel.source_id == source_id,
-                    )
-                )
-            )
-            if not self._directed:
-                # Also delete reverse edges
-                self._session.execute(
-                    delete(EdgeModel).where(
-                        and_(
-                            EdgeModel.graph_id == self._graph_id,
-                            EdgeModel.target_id == source_id,
-                        )
-                    )
-                )
-            # Delete the node
-            self._session.execute(
-                delete(NodeModel).where(
-                    and_(
-                        NodeModel.graph_id == self._graph_id,
-                        NodeModel.node_key == dbkey,
-                    )
-                )
-            )
-
-    def __iter__(self):
-        stmt = select(NodeModel.node_key).where(NodeModel.graph_id == self._graph_id)
-        for (dbkey,) in self._session.execute(stmt):
-            yield _deserialize_node_key(dbkey)
-
-    def __len__(self) -> int:
-        stmt = (
-            select(func.count())
-            .select_from(NodeModel)
-            .where(NodeModel.graph_id == self._graph_id)
-        )
-        return self._session.scalar(stmt) or 0
-
-
-class _PredAdjDict(collections.abc.MutableMapping):
-    """G._pred – target → predecessor inner adjacency dict (reverse of _adj)."""
-
-    def __init__(
-        self, session: Session, graph_id: uuid.UUID, directed: bool, multi: bool
-    ) -> None:
-        self._session = session
-        self._graph_id = graph_id
-        self._directed = directed
-        self._multi = multi
-
-    def __getitem__(self, target: Any):
-        norm = _to_hashable(target)
-        dbkey = _db_node_key(norm)
-        target_id = self._session.scalar(
-            select(NodeModel.node_id).where(
-                and_(
-                    NodeModel.graph_id == self._graph_id,
-                    NodeModel.node_key == dbkey,
-                )
-            )
-        )
-        if target_id is None:
-            raise KeyError(target)
-
-        stmt = (
-            select(EdgeModel.source_id)
-            .where(
-                and_(
-                    EdgeModel.graph_id == self._graph_id,
-                    EdgeModel.target_id == target_id,
-                )
-            )
-        )
-        source_ids = [row[0] for row in self._session.execute(stmt)]
-        return _PredecessorInnerDict(
-            self._session, self._graph_id, target_id, source_ids,
-        )
-
-    def __setitem__(self, key, value):
-        # NetworkX internal: self._pred[node] = {} during add_node
-        if isinstance(value, dict):
-            norm = _to_hashable(key)
-            dbkey = _db_node_key(norm)
-            existing_id = self._session.scalar(
-                select(NodeModel.node_id).where(
-                    and_(
-                        NodeModel.graph_id == self._graph_id,
-                        NodeModel.node_key == dbkey,
-                    )
-                )
-            )
-            if existing_id is None:
-                node = NodeModel(
-                    graph_id=self._graph_id,
-                    node_key=dbkey,
-                    attributes={},
-                )
-                self._session.add(node)
-                self._session.flush()
-
-    def __delitem__(self, key):
-        # Allow deletion for DiGraph remove_node: del _pred[n]
-        norm = _to_hashable(key)
-        dbkey = _db_node_key(norm)
-        target_id = self._session.scalar(
-            select(NodeModel.node_id).where(
-                and_(
-                    NodeModel.graph_id == self._graph_id,
-                    NodeModel.node_key == dbkey,
-                )
-            )
-        )
-        if target_id is not None:
-            # Delete all incoming edges to this node (including multi-edges)
-            self._session.execute(
-                delete(EdgeModel).where(
-                    and_(
-                        EdgeModel.graph_id == self._graph_id,
-                        EdgeModel.target_id == target_id,
-                    )
-                )
-            )
-
-    def __iter__(self):
-        stmt = select(NodeModel.node_key).where(NodeModel.graph_id == self._graph_id)
-        for (dbkey,) in self._session.execute(stmt):
-            yield _deserialize_node_key(dbkey)
-
-    def __len__(self) -> int:
-        stmt = (
-            select(func.count())
-            .select_from(NodeModel)
-            .where(NodeModel.graph_id == self._graph_id)
-        )
-        return self._session.scalar(stmt) or 0
-
-
-class _PredecessorInnerDict(collections.abc.MutableMapping):
-    """Inner adjacency for G._pred: maps predecessor node → edge attributes.
-
-    For a given target node T, _pred[T] returns a dict of {predecessor: attrs}
-    where edges go from predecessor → T.
-    """
-
-    def __init__(
-        self, session: Session, graph_id: uuid.UUID, target_id: uuid.UUID,
-        source_ids: list[uuid.UUID]
-    ) -> None:
-        self._session = session
-        self._graph_id = graph_id
-        self._target_id = target_id
-        self._source_ids = source_ids  # UUIDs of predecessor nodes
-
-    def __getitem__(self, pred_key: Any) -> dict[str, Any]:
-        if not self._source_ids:
-            raise KeyError(pred_key)
-        norm = _to_hashable(pred_key)
-        dbkey = _db_node_key(norm)
-        # Find which source_id matches this key
-        src_id = self._session.scalar(
-            select(NodeModel.node_id).where(
-                and_(
-                    NodeModel.graph_id == self._graph_id,
-                    NodeModel.node_key == dbkey,
-                    NodeModel.node_id.in_(self._source_ids),
-                )
-            )
-        )
-        if src_id is None:
-            raise KeyError(pred_key)
-        stmt = select(EdgeModel.attributes).where(
-            and_(
-                EdgeModel.graph_id == self._graph_id,
-                EdgeModel.source_id == src_id,
-                EdgeModel.target_id == self._target_id,
-                EdgeModel.key.is_(None),
-            )
-        )
-        attrs = self._session.scalar(stmt)
-        if attrs is None:
-            raise KeyError(pred_key)
-        return attrs or {}
-
-    def __setitem__(self, key, value):
-        # Called by DiGraph.add_edge: self._pred[v][u] = datadict
-        # self is _PredecessorInnerDict for target v
-        # key=u (predecessor), value=datadict
-        # We need to store edge u→v in the DB
-        pred_id = self._session.scalar(
-            select(NodeModel.node_id).where(
-                and_(
-                    NodeModel.graph_id == self._graph_id,
-                    NodeModel.node_key == _db_node_key(_to_hashable(key)),
-                )
-            )
-        )
-        if pred_id is None:
-            raise KeyError(key)
-        # Store edge pred_id → self._target_id
-        exists = self._session.scalar(
-            select(EdgeModel.edge_id).where(
-                and_(
-                    EdgeModel.graph_id == self._graph_id,
-                    EdgeModel.source_id == pred_id,
-                    EdgeModel.target_id == self._target_id,
-                    EdgeModel.key.is_(None),
-                )
-            )
-        ) is not None
-        if exists:
-            self._session.execute(
-                update(EdgeModel)
-                .where(
-                    and_(
-                        EdgeModel.graph_id == self._graph_id,
-                        EdgeModel.source_id == pred_id,
-                        EdgeModel.target_id == self._target_id,
-                        EdgeModel.key.is_(None),
-                    )
-                )
-                .values(attributes=value or {})
-            )
         else:
-            self._session.add(
-                EdgeModel(
-                    graph_id=self._graph_id,
-                    source_id=pred_id,
-                    target_id=self._target_id,
-                    key=None,
-                    attributes=value or {},
-                )
-            )
+            raise NotImplementedError("Direct G.adj assignment not supported")
 
     def __delitem__(self, key):
-        # Allow predecessor deletion for DiGraph/MultiDiGraph remove_node
-        if not self._source_ids:
-            return
-        norm = _to_hashable(key)
-        dbkey = _db_node_key(norm)
-        pred_id = self._session.scalar(
-            select(NodeModel.node_id).where(
-                and_(
-                    NodeModel.graph_id == self._graph_id,
-                    NodeModel.node_key == dbkey,
-                    NodeModel.node_id.in_(self._source_ids),
-                )
-            )
-        )
-        if pred_id is not None:
-            self._session.execute(
-                delete(EdgeModel).where(
-                    and_(
-                        EdgeModel.graph_id == self._graph_id,
-                        EdgeModel.source_id == pred_id,
-                        EdgeModel.target_id == self._target_id,
-                    )
-                )
-            )
+        raise NotImplementedError("Direct G.adj deletion not supported")
 
     def __iter__(self):
-        # Yield the node keys of all predecessors
-        stmt = (
-            select(NodeModel.node_key)
-            .where(
-                and_(
-                    NodeModel.graph_id == self._graph_id,
-                    NodeModel.node_id.in_(self._source_ids),
-                )
-            )
-        )
+        stmt = select(NodeModel.node_key).where(NodeModel.graph_id == self._graph_id)
         for (dbkey,) in self._session.execute(stmt):
             yield _deserialize_node_key(dbkey)
 
     def __len__(self) -> int:
-        if not self._source_ids:
-            return 0
         stmt = (
             select(func.count())
-            .where(NodeModel.node_id.in_(self._source_ids))
+            .select_from(NodeModel)
             .where(NodeModel.graph_id == self._graph_id)
         )
         return self._session.scalar(stmt) or 0
@@ -865,235 +671,311 @@ class _NXSQLBase(nx.Graph):
     def __init__(
         self,
         session: Session | None = None,
-        name: str | None = None,
+        graph_id: uuid.UUID | None = None,
         incoming_graph_data=None,
+        name: str | None = None,
         **attr,
     ) -> None:
-        # For graph views (subgraph_view), session may be None
+        # Allow session=None for reverse()/copy() operations that create
+        # temporary in-memory graphs
         self.session = session
 
-        if session is not None and name is not None:
-            gmodel = session.scalar(
-                select(GraphModel).where(GraphModel.name == name)
-            )
-            if gmodel:
-                self.graph_id = gmodel.graph_id
-                attr = {**gmodel.attributes, **attr} if gmodel.attributes else attr
-            else:
-                gmodel = GraphModel(name=name, graph_type=self._graph_type, attributes=attr or {})
-                session.add(gmodel)
-                session.commit()
-                self.graph_id = gmodel.graph_id
-        elif session is not None:
-            gmodel = GraphModel(graph_type=self._graph_type, attributes=attr or {})
-            session.add(gmodel)
-            session.commit()
-            self.graph_id = gmodel.graph_id
-        else:
-            # No session: fall back to pure in-memory graph for operations
-            # like complement(), copy() on views, etc.
-            self.graph_id = None
-            super().__init__(incoming_graph_data=incoming_graph_data, **attr)
+        if session is None:
+            # In-memory mode: just use parent class fully
+            init_attr = {**(attr or {})}
+            if name is not None:
+                init_attr["name"] = name
+            super().__init__(incoming_graph_data=incoming_graph_data, **init_attr)
             return
 
-        super().__init__(incoming_graph_data=incoming_graph_data, **attr)
-
-        if self.graph_id is not None:
-            self._node = _NodeDict(session, self.graph_id)
-            self._adj = _AdjacencyDict(
-                session,
-                self.graph_id,
-                directed=self._directed,
-                multi=self._multigraph,
+        if graph_id is None:
+            all_attrs = {**(attr or {})}
+            if name is not None:
+                all_attrs["name"] = name
+            gmodel = GraphModel(
+                graph_type=self._graph_type,
+                name=name,
+                attributes=all_attrs or None,
             )
-            if self._directed:
-                self._succ = self._adj
-                self._pred = _PredAdjDict(
-                    session,
-                    self.graph_id,
-                    directed=True,
-                    multi=self._multigraph,
-                )
+            self.session.add(gmodel)
+            self.session.commit()
+            self.graph_id = gmodel.graph_id
+        else:
+            self.graph_id = graph_id
+            gmodel = self.session.get(GraphModel, graph_id)
+            if gmodel and gmodel.attributes:
+                attr = {**gmodel.attributes, **attr}
+
+        init_attr = {**(attr or {})}
+        if name is not None:
+            init_attr["name"] = name
+        super().__init__(incoming_graph_data=incoming_graph_data, **init_attr)
+
+        self._node = _NodeDict(self.session, self.graph_id)
+        self._adj = _AdjacencyDict(
+            self.session,
+            self.graph_id,
+            directed=self._directed,
+            multi=self._multigraph,
+        )
+
+        # DiGraph compatibility: NetworkX algorithms access G._succ and G._pred directly
+        if self._directed:
+            self._succ = self._adj  # type: ignore[misc]
+            self._pred = _PredAdjacencyDict(
+                self.session,
+                self.graph_id,
+            )
 
     def add_node(self, node_for_adding, **attr):
-        """Normalize node key and write attrs directly to DB.
-
-        NetworkX's add_node does: self._node[n] = {} then .update(attr) on the
-        returned dict — but that in-memory update never reaches our DB-backed
-        _NodeDict. So we bypass by writing attrs ourselves, then let NetworkX
-        handle _adj/_node bookkeeping.
-        """
+        """Normalize node key and persist attributes directly to DB."""
+        if self.session is None:
+            return super().add_node(node_for_adding, **attr)
         norm = _to_hashable(node_for_adding)
-        # Write attrs directly to DB so .update() on NetworkX's local dict
-        # doesn't lose them
-        self._node[norm] = attr if attr else {}
-        # Now call NetworkX add_node for _adj/_succ bookkeeping only
-        # (it will find the node already exists and skip re-creation)
-        super().add_node(norm)
+        if norm is node_for_adding and attr:
+            # Normalization didn't change the node — update in-place via parent
+            if node_for_adding not in self._node:
+                pass  # Will be created by super()
+            else:
+                self._node[node_for_adding].update(attr)
+                return
+        if attr:
+            # Bypass NetworkX's pattern of creating empty dict then updating in-memory.
+            # Write attrs directly to DB so they're persisted on add_node call.
+            dbkey = _db_node_key(norm)
+            existing_id = self.session.scalar(
+                select(NodeModel.node_id).where(
+                    and_(
+                        NodeModel.graph_id == self.graph_id,
+                        NodeModel.node_key == dbkey,
+                    )
+                )
+            )
+            if existing_id is not None:
+                # Node exists — update attributes
+                self.session.execute(
+                    update(NodeModel)
+                    .where(
+                        and_(
+                            NodeModel.graph_id == self.graph_id,
+                            NodeModel.node_key == dbkey,
+                        )
+                    )
+                    .values(attributes={**self._node[norm], **attr})
+                )
+            else:
+                # New node — create with attrs
+                node = NodeModel(
+                    graph_id=self.graph_id,
+                    node_key=dbkey,
+                    attributes=attr,
+                )
+                self.session.add(node)
+                self.session.flush()
+        super().add_node(norm, **attr)
 
     def add_nodes_from(self, nodes_for_adding, **attr):
-        """Write attrs directly to DB before letting NetworkX handle bookkeeping."""
+        if self.session is None:
+            return super().add_nodes_from(nodes_for_adding, **attr)
         normed = [_to_hashable(n) for n in nodes_for_adding]
-        for norm in normed:
-            self._node[norm] = attr if attr else {}
-        super().add_nodes_from(normed)
+        super().add_nodes_from(normed, **attr)
 
     def add_edge(self, u_of_edge, v_of_edge, **attr):
         nu = _to_hashable(u_of_edge)
         nv = _to_hashable(v_of_edge)
-        # For DiGraph, call nx.DiGraph.add_edge which only adds one direction.
-        # Graph.add_edge adds both directions (self._adj[u][v] + self._adj[v][u])
-        # which is wrong for directed graphs.
-        if self._directed:
-            if self._multigraph:
-                nx.MultiDiGraph.add_edge(self, nu, nv, **attr)
-            else:
-                nx.DiGraph.add_edge(self, nu, nv, **attr)
+        if self._multigraph:
+            key = attr.pop('key', None)
+            self._add_multi_edge(nu, nv, key, attr, {})
+        elif self._directed:
+            # DiGraph: add only one direction, no reverse edge
+            for node_key in (nu, nv):
+                if node_key not in self._node:
+                    if node_key is None:
+                        raise nx.NetworkXError("None cannot be a node")
+                    self._adj[node_key] = {}
+            datadict = self._adj[nu].get(nv, {})
+            datadict.update(attr)
+            self._adj[nu][nv] = datadict
         else:
-            if self._multigraph:
-                nx.MultiGraph.add_edge(self, nu, nv, **attr)
-            else:
-                super().add_edge(nu, nv, **attr)
+            super().add_edge(nu, nv, **attr)
 
     def add_edges_from(self, ebunch_to_add, **attr):
-        # Handle both (u, v) and (u, v, d) edge formats
-        normed = []
-        for edge in ebunch_to_add:
-            if len(edge) == 2:
-                u, v = edge
-                normed.append((_to_hashable(u), _to_hashable(v), {}))
-            else:
-                u, v, d = edge
-                normed.append((_to_hashable(u), _to_hashable(v), d))
-        if self._directed:
-            if self._multigraph:
-                nx.MultiDiGraph.add_edges_from(self, normed, **attr)
-            else:
-                nx.DiGraph.add_edges_from(self, normed, **attr)
-        else:
-            # For in-memory mode (no session), do it manually to avoid
-            # issues with _dispatchable compiled bytecode
-            if self.session is None:
-                for u, v, dd in normed:
-                    if u not in self._node:
-                        self._adj[u] = {}
-                        self._node[u] = {}
-                    if v not in self._node:
-                        self._adj[v] = {}
-                        self._node[v] = {}
-                    datadict = self._adj[u].get(v, {})
-                    datadict.update(attr)
-                    datadict.update(dd)
-                    self._adj[u][v] = datadict
-                    self._adj[v][u] = datadict
-            else:
-                if self._multigraph:
-                    nx.MultiGraph.add_edges_from(self, normed, **attr)
+        if self._multigraph:
+            for e in ebunch_to_add:
+                ne = len(e)
+                if ne == 2:
+                    u, v = e
+                    dd: dict[str, Any] = {}
+                    key = None
+                elif ne == 3:
+                    u, v, third = e
+                    if isinstance(third, dict):
+                        dd = third
+                        key = None
+                    else:
+                        dd = {"weight": third}
+                        key = None
+                elif ne == 4:
+                    u, v, key, dd = e
+                    if not isinstance(dd, dict):
+                        dd = {"weight": dd}
                 else:
-                    super().add_edges_from(normed, **attr)
-
-    def remove_edge(self, u, v):
-        nu = _to_hashable(u)
-        nv = _to_hashable(v)
-        if self._directed:
-            if self._multigraph:
-                nx.MultiDiGraph.remove_edge(self, nu, nv)
-            else:
-                nx.DiGraph.remove_edge(self, nu, nv)
+                    raise nx.NetworkXError(f"Edge tuple {e} must be a 2/3/4-tuple.")
+                nu = _to_hashable(u)
+                nv = _to_hashable(v)
+                self._add_multi_edge(nu, nv, key, dd, attr)
+        elif self._directed:
+            # DiGraph: add only one direction per edge
+            for e in ebunch_to_add:
+                ne = len(e)
+                if ne == 2:
+                    u, v = e
+                    dd: dict[str, Any] = {}
+                elif ne == 3:
+                    u, v, dd = e
+                    if not isinstance(dd, dict):
+                        dd = {"weight": dd} if "weight" not in attr else dd
+                else:
+                    raise nx.NetworkXError(f"Edge tuple {e} must be a 2-tuple or 3-tuple.")
+                nu = _to_hashable(u)
+                nv = _to_hashable(v)
+                # Ensure nodes exist
+                if nu not in self._node:
+                    self._adj[nu] = {}
+                if nv not in self._node:
+                    self._adj[nv] = {}
+                datadict = self._adj[nu].get(nv, {})
+                datadict.update(dd)
+                datadict.update(attr)
+                self._adj[nu][nv] = datadict
         else:
-            if self._multigraph:
-                nx.MultiGraph.remove_edge(self, nu, nv)
-            else:
-                super().remove_edge(nu, nv)
+            normed = []
+            for e in ebunch_to_add:
+                ne = len(e)
+                if ne == 2:
+                    u, v = e
+                    dd: dict[str, Any] = {}
+                elif ne == 3:
+                    u, v, dd = e
+                    if not isinstance(dd, dict):
+                        dd = {"weight": dd} if "weight" not in attr else dd
+                else:
+                    raise nx.NetworkXError(f"Edge tuple {e} must be a 2-tuple or 3-tuple.")
+                normed.append((_to_hashable(u), _to_hashable(v), dd))
+            super().add_edges_from(normed, **attr)
 
-    def copy(self, as_view=False):
-        """Return a shallow copy of the graph, backed by the same DB session."""
-        if as_view:
-            return nx.graphviews.generic_graph_view(self)
-        # For subgraph views, resolve session/graph_id from underlying graph
-        graph = getattr(self, "_graph", None)
-        if graph is not None and hasattr(graph, "session"):
-            session = graph.session
-            graph_id = graph.graph_id
-        else:
-            session = self.session
-            graph_id = self.graph_id
-        # Create a new instance sharing the same session and graph_id
-        H = self.__class__.__new__(self.__class__)
-        H.session = session
-        H.graph_id = graph_id
-        H._graph_type = self._graph_type
-        H._directed = self._directed
-        H._multigraph = self._multigraph
-        # Initialize graph-level dict (from NetworkX Graph base)
-        H.graph = dict(self.graph)
-        # Rebuild the DB-backed views pointing to the same graph
-        H._node = _NodeDict(session, graph_id)
-        H._adj = _AdjacencyDict(
-            session, graph_id,
-            directed=self._directed, multi=self._multigraph,
-        )
-        if self._directed:
-            H._succ = H._adj
-            H._pred = _PredAdjDict(
-                session, graph_id,
-                directed=True, multi=self._multigraph,
+    def _add_multi_edge(self, u: Any, v: Any, key, dd: dict[str, Any], attr: dict):
+        """Add a single multi-edge without going through parent class."""
+        combined = {**dd, **attr}
+
+        # Ensure nodes exist
+        if u not in self._node:
+            self._node[u] = {}
+        if v not in self._node:
+            self._node[v] = {}
+
+        # Get source node id
+        src_dbkey = _db_node_key(u)
+        src_id = self.session.scalar(
+            select(NodeModel.node_id).where(
+                and_(NodeModel.graph_id == self.graph_id, NodeModel.node_key == src_dbkey)
             )
-        # Copy node/edge data — nodes already exist in DB, just populate _adj
-        for n, d in self._node.items():
-            H._node[n] = dict(d) if d else {}
-        for u, v, d in self.edges(data=True):
-            H._adj[u][v] = dict(d)
-        return H
+        )
 
-    def to_directed(self, copy=True):
-        """Return a directed representation of the graph."""
-        if copy:
-            D = DiGraph(self.session)
-            D.graph.update(self.graph)
-            for n, d in self.nodes(data=True):
-                D.add_node(n, **d)
-            for u, v, d in self.edges(data=True):
-                D.add_edge(u, v, **d)
-            # Also add reverse edges for undirected
-            for u, v, d in self.edges(data=True):
-                if u != v:
-                    D.add_edge(v, u, **d)
-            return D
+        # Get or create target node
+        tgt_dbkey = _db_node_key(v)
+        tgt_id = self.session.scalar(
+            select(NodeModel.node_id).where(
+                and_(NodeModel.graph_id == self.graph_id, NodeModel.node_key == tgt_dbkey)
+            )
+        )
+        if tgt_id is None:
+            new_node = NodeModel(graph_id=self.graph_id, node_key=tgt_dbkey, attributes={})
+            self.session.add(new_node)
+            self.session.flush()
+            tgt_id = new_node.node_id
+
+        # Determine key
+        if key is None:
+            key = self.new_edge_key(u, v)
+        key_str = str(key)
+
+        # Check existing edge with this key
+        existing = self.session.scalar(
+            select(EdgeModel.edge_id).where(
+                and_(
+                    EdgeModel.graph_id == self.graph_id,
+                    EdgeModel.source_id == src_id,
+                    EdgeModel.target_id == tgt_id,
+                    EdgeModel.key == key_str,
+                )
+            )
+        ) is not None
+
+        if existing:
+            self.session.execute(
+                update(EdgeModel)
+                .where(
+                    and_(
+                        EdgeModel.graph_id == self.graph_id,
+                        EdgeModel.source_id == src_id,
+                        EdgeModel.target_id == tgt_id,
+                        EdgeModel.key == key_str,
+                    )
+                )
+                .values(attributes=combined)
+            )
         else:
-            return nx.view.to_directed(self)
+            self.session.add(
+                EdgeModel(
+                    graph_id=self.graph_id,
+                    source_id=src_id,
+                    target_id=tgt_id,
+                    key=key_str,
+                    attributes=combined,
+                )
+            )
 
-    def to_undirected(self, copy=True):
-        """Return an undirected representation of the graph."""
-        if copy:
-            G = Graph(self.session)
-            G.graph.update(self.graph)
-            for n, d in self.nodes(data=True):
-                G.add_node(n, **d)
-            seen = set()
-            for u, v, d in self.edges(data=True):
-                key = (min(u, v), max(u, v))
-                if key not in seen:
-                    seen.add(key)
-                    G.add_edge(u, v, **d)
-            return G
-        else:
-            return nx.view.to_undirected(self)
-
-    def reverse(self, copy=True):
-        """Return the reverse of this DiGraph."""
+        # For undirected, add reverse
         if not self._directed:
-            raise nx.NetworkXError("Reverse only works on DiGraph")
-        if copy:
-            H = DiGraph(self.session)
-            H.graph.update(self.graph)
-            for n, d in self.nodes(data=True):
-                H.add_node(n, **d)
-            for u, v, d in self.edges(data=True):
-                H.add_edge(v, u, **d)
-            return H
-        else:
-            return nx.reverse_view(self)
+            existing_rev = self.session.scalar(
+                select(EdgeModel.edge_id).where(
+                    and_(
+                        EdgeModel.graph_id == self.graph_id,
+                        EdgeModel.source_id == tgt_id,
+                        EdgeModel.target_id == src_id,
+                        EdgeModel.key == key_str,
+                    )
+                )
+            ) is not None
+            if existing_rev:
+                self.session.execute(
+                    update(EdgeModel)
+                    .where(
+                        and_(
+                            EdgeModel.graph_id == self.graph_id,
+                            EdgeModel.source_id == tgt_id,
+                            EdgeModel.target_id == src_id,
+                            EdgeModel.key == key_str,
+                        )
+                    )
+                    .values(attributes=combined)
+                )
+            else:
+                self.session.add(
+                    EdgeModel(
+                        graph_id=self.graph_id,
+                        source_id=tgt_id,
+                        target_id=src_id,
+                        key=key_str,
+                        attributes=combined,
+                    )
+                )
+
+        # Update in-memory adjacency
+        self._adj[u][v][key] = combined
+        if not self._directed:
+            self._adj[v][u][key] = combined
 
     def __networkx_backend__(self) -> str:
         return "nx_sql"
@@ -1105,47 +987,87 @@ class _NXSQLBase(nx.Graph):
         return self._multigraph
 
 
-class Graph(_NXSQLBase):
+class Graph(_NXSQLBase, nx.Graph):
     _graph_type = "Graph"
     _directed = False
     _multigraph = False
 
 
-class DiGraph(_NXSQLBase):
+class DiGraph(_NXSQLBase, nx.DiGraph):
     _graph_type = "DiGraph"
     _directed = True
     _multigraph = False
 
-    @property
-    def pred(self):
-        """Alias for _pred, needed by dag_longest_path etc."""
-        return nx.classes.coreviews.AdjacencyView(self._pred)
+    def successors(self, n: Any):
+        """Returns an iterator over successor nodes of n."""
+        try:
+            return iter(self._succ[n])
+        except KeyError as err:
+            raise nx.NetworkXError(f"The node {n} is not in the digraph.") from err
 
-    @property
-    def succ(self):
-        """Alias for _succ (same as _adj for DiGraph)."""
-        return nx.classes.coreviews.AdjacencyView(self._adj)
+    def predecessors(self, n: Any):
+        """Returns an iterator over predecessor nodes of n."""
+        try:
+            return iter(self._pred[n])
+        except KeyError as err:
+            raise nx.NetworkXError(f"The node {n} is not in the digraph.") from err
 
-    @property
-    def in_degree(self):
-        """Return a view of node in-degrees."""
-        return nx.reportviews.InDegreeView(self)
+    def has_successor(self, u: Any, v: Any) -> bool:
+        """Return True if u has a directed edge to v."""
+        return u in self._succ and v in self._succ[u]
 
-    @property
-    def out_degree(self):
-        """Return a view of node out-degrees."""
-        return nx.reportviews.OutDegreeView(self)
+    def has_predecessor(self, u: Any, v: Any) -> bool:
+        """Return True if v has a directed edge to u."""
+        return u in self._pred and v in self._pred[u]
 
-    @property
-    def out_edges(self):
-        """Return a view of outgoing edges."""
-        return nx.reportviews.OutEdgeView(self)
+    def out_edges(self, nbunch=None, data=False, default=None):
+        """Return edges outgoing from node(s)."""
+        if nbunch is None:
+            result = []
+            for n in self._succ:
+                for m, d in self._succ[n].items():
+                    if data:
+                        result.append((n, m, dict(d)))
+                    else:
+                        result.append((n, m))
+            return result
+        # nbunch is a single node or iterable of nodes
+        try:
+            nbunch_iter = iter(nbunch)
+        except TypeError:
+            nbunch_iter = [nbunch]
+        result = []
+        for n in nbunch_iter:
+            if n in self._succ:
+                for m, d in self._succ[n].items():
+                    if data:
+                        result.append((n, m, dict(d)))
+                    else:
+                        result.append((n, m))
+        return result
 
-    def predecessors(self, node):
-        return iter(self._pred[node])
+    def in_edges(self, nbunch=None, data=False, default=None):
+        """Return edges incoming to node(s)."""
+        try:
+            nbunch_iter = iter(nbunch)
+            filter_nodes = set(nbunch_iter)
+        except TypeError:
+            filter_nodes = {nbunch} if nbunch is not None else None
 
-    def successors(self, node):
-        return iter(self._adj[node])
+        result = []
+        for n in self._pred:
+            if filter_nodes is not None and n not in filter_nodes:
+                continue
+            for m, d in self._pred[n].items():
+                if data:
+                    result.append((m, n, dict(d)))
+                else:
+                    result.append((m, n))
+        return result
+
+    # Note: in_degree, out_degree, and degree are inherited from nx.DiGraph
+    # as cached_properties that return proper view objects.
+    # Our override of _succ and _pred ensures they work with our adjacency.
 
 
 class MultiGraph(_NXSQLBase):
@@ -1153,21 +1075,32 @@ class MultiGraph(_NXSQLBase):
     _directed = False
     _multigraph = True
 
+    def new_edge_key(self, u: Any, v: Any) -> int:
+        """Generate a new unused edge key for multi-edge between u and v."""
+        nu, nv = _to_hashable(u), _to_hashable(v)
+        try:
+            keydict = self._adj[nu][nv]
+        except KeyError:
+            return 0
+        key = len(keydict)
+        while key in keydict:
+            key += 1
+        return key
+
 
 class MultiDiGraph(_NXSQLBase):
     _graph_type = "MultiDiGraph"
     _directed = True
     _multigraph = True
 
-    @property
-    def in_degree(self):
-        return nx.reportviews.InDegreeView(self)
-
-    @property
-    def out_degree(self):
-        return nx.reportviews.OutDegreeView(self)
-
-    @property
-    def out_edges(self):
-        """Return a view of outgoing edges."""
-        return nx.reportviews.OutEdgeView(self)
+    def new_edge_key(self, u: Any, v: Any) -> int:
+        """Generate a new unused edge key for multi-edge between u and v."""
+        nu, nv = _to_hashable(u), _to_hashable(v)
+        try:
+            keydict = self._adj[nu][nv]
+        except KeyError:
+            return 0
+        key = len(keydict)
+        while key in keydict:
+            key += 1
+        return key
