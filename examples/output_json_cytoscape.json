@@ -1,0 +1,34 @@
+{
+  "data": [],
+  "directed": false,
+  "multigraph": false,
+  "elements": {
+    "nodes": [
+      {
+        "data": {
+          "label": "Node A",
+          "id": "A",
+          "value": "A",
+          "name": "A"
+        }
+      },
+      {
+        "data": {
+          "label": "Node B",
+          "id": "B",
+          "value": "B",
+          "name": "B"
+        }
+      }
+    ],
+    "edges": [
+      {
+        "data": {
+          "weight": 1.0,
+          "source": "A",
+          "target": "B"
+        }
+      }
+    ]
+  }
+}

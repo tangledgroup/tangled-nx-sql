@@ -131,11 +131,150 @@ class _NodeDict(collections.abc.MutableMapping):
         return self._session.scalar(stmt) or 0
 
 
+class _MultiInnerAdjDict(collections.abc.MutableMapping):
+    """Inner adjacency for MultiGraph/MultiDiGraph: target → {key: attrs}.
+
+    For multi-edges, NetworkX expects inner dicts to support integer keys
+    (0, 1, 2, ...) representing edge indices. We auto-assign keys in the DB
+    and present them as integer keys to match NX API.
+    """
+
+    def __init__(
+        self,
+        session: Session,
+        graph_id: uuid.UUID,
+        source_id: uuid.UUID | None,
+        directed: bool,
+    ) -> None:
+        self._session = session
+        self._graph_id = graph_id
+        self._source_id = source_id
+        self._directed = directed
+        self._cache: dict[str, list[tuple[str | None, dict[str, Any]]]] | None = None
+
+    def _load_cache(self) -> None:
+        """Load all edges from source to target_id into cache."""
+        if self._source_id is None:
+            self._cache = []
+            return
+        stmt = (
+            select(EdgeModel.key, EdgeModel.attributes)
+            .where(
+                and_(
+                    EdgeModel.graph_id == self._graph_id,
+                    EdgeModel.source_id == self._source_id,
+                )
+            )
+            .order_by(EdgeModel.edge_id)
+        )
+        self._cache = [
+            (key, attrs or {})
+            for key, attrs in self._session.execute(stmt)
+        ]
+
+    def _get_or_create_target_id(self, target: Any) -> uuid.UUID:
+        norm = _to_hashable(target)
+        dbkey = _db_node_key(norm)
+        target_id = self._session.scalar(
+            select(NodeModel.node_id).where(
+                and_(
+                    NodeModel.graph_id == self._graph_id,
+                    NodeModel.node_key == dbkey,
+                )
+            )
+        )
+        if target_id is None:
+            new_node = NodeModel(
+                graph_id=self._graph_id,
+                node_key=dbkey,
+                attributes={},
+            )
+            self._session.add(new_node)
+            self._session.flush()
+            target_id = new_node.node_id
+        return target_id
+
+    def __getitem__(self, target: Any) -> dict[str, Any]:
+        """Return attrs for edge with key=target."""
+        if self._source_id is None:
+            raise KeyError(target)
+        # NetworkX multi-edge keys are ints; we store them as strings in DB
+        key = str(target) if not isinstance(target, str) else target
+        self._load_cache()
+        for k, attrs in self._cache:
+            if k == key:
+                return attrs
+        raise KeyError(target)
+
+    def __setitem__(self, target: Any, attrs: dict[str, Any] | None) -> None:
+        """Set edge with key=target. For multi-edges, NetworkX passes (v, key)."""
+        # This path is used when NX does self._adj[u][v][key] = data
+        # But our inner dict maps target→{key:attrs}, so target here is the key
+        # and we need to know the actual target node differently.
+        # In practice, NX calls this via self._adj[u][v] = {} first (create),
+        # then self._adj[u][v][key] = data.
+        raise NotImplementedError("Multi-edge setitem via inner dict")
+
+    def __delitem__(self, target: Any) -> None:
+        if self._source_id is None:
+            return
+        key = str(target) if not isinstance(target, str) else target
+        self._session.execute(
+            delete(EdgeModel).where(
+                and_(
+                    EdgeModel.graph_id == self._graph_id,
+                    EdgeModel.source_id == self._source_id,
+                    EdgeModel.key == key,
+                )
+            )
+        )
+        if not self._directed:
+            # Also delete reverse edge
+            self._session.execute(
+                delete(EdgeModel).where(
+                    and_(
+                        EdgeModel.graph_id == self._graph_id,
+                        EdgeModel.target_id == self._source_id,
+                        EdgeModel.key == key,
+                    )
+                )
+            )
+        self._cache = None
+
+    def __iter__(self):
+        """Yield integer edge keys for edges from source to any target."""
+        if self._source_id is None:
+            return
+        self._load_cache()
+        if self._cache:
+            for i, (key, _) in enumerate(self._cache):
+                yield i
+
+    def __len__(self) -> int:
+        if self._source_id is None:
+            return 0
+        stmt = (
+            select(func.count())
+            .select_from(EdgeModel)
+            .where(
+                and_(
+                    EdgeModel.graph_id == self._graph_id,
+                    EdgeModel.source_id == self._source_id,
+                )
+            )
+        )
+        return self._session.scalar(stmt) or 0
+
+
 class _SimpleInnerAdjDict(collections.abc.MutableMapping):
     """Inner adjacency for Graph / DiGraph (non-multi)."""
 
     def __init__(
-        self, session: Session, graph_id: uuid.UUID, source_id: uuid.UUID | None, directed: bool
+        self,
+        session: Session,
+        graph_id: uuid.UUID,
+        source_id: uuid.UUID | None,
+        directed: bool,
     ) -> None:
         self._session = session
         self._graph_id = graph_id
@@ -369,9 +508,6 @@ class _AdjacencyDict(collections.abc.MutableMapping):
         self._multi = multi
 
     def __getitem__(self, source: Any):
-        if self._multi:
-            raise NotImplementedError("MultiGraph/MultiDiGraph not implemented yet")
-
         norm = _to_hashable(source)
         dbkey = _db_node_key(norm)
         source_id = self._session.scalar(
@@ -385,14 +521,18 @@ class _AdjacencyDict(collections.abc.MutableMapping):
         if source_id is None:
             raise KeyError(source)
 
+        if self._multi:
+            return _MultiInnerAdjDict(
+                self._session, self._graph_id, source_id, self._directed,
+            )
         return _SimpleInnerAdjDict(
             self._session, self._graph_id, source_id, self._directed
         )
 
     def __setitem__(self, key, value):
         """Handle NetworkX internal: self._adj[node] = {} during add_node."""
-        if isinstance(value, dict) and not self._multi:
-            # NetworkX internal: adding a new node
+        if isinstance(value, dict):
+            # NetworkX internal: adding a new node (works for both simple and multi)
             norm = _to_hashable(key)
             dbkey = _db_node_key(norm)
             existing_id = self._session.scalar(
@@ -411,8 +551,6 @@ class _AdjacencyDict(collections.abc.MutableMapping):
                 )
                 self._session.add(node)
                 self._session.flush()
-        else:
-            raise NotImplementedError("Direct G.adj assignment not supported")
 
     def __delitem__(self, key):
         # Allow deletion of adjacency entries (needed for remove_node, etc.)
@@ -427,13 +565,12 @@ class _AdjacencyDict(collections.abc.MutableMapping):
             )
         )
         if source_id is not None:
-            # Delete all edges from this node
+            # Delete all edges from this node (including multi-edges)
             self._session.execute(
                 delete(EdgeModel).where(
                     and_(
                         EdgeModel.graph_id == self._graph_id,
                         EdgeModel.source_id == source_id,
-                        EdgeModel.key.is_(None),
                     )
                 )
             )
@@ -444,7 +581,6 @@ class _AdjacencyDict(collections.abc.MutableMapping):
                         and_(
                             EdgeModel.graph_id == self._graph_id,
                             EdgeModel.target_id == source_id,
-                            EdgeModel.key.is_(None),
                         )
                     )
                 )
@@ -484,9 +620,6 @@ class _PredAdjDict(collections.abc.MutableMapping):
         self._multi = multi
 
     def __getitem__(self, target: Any):
-        if self._multi:
-            raise NotImplementedError("MultiGraph/MultiDiGraph not implemented yet")
-
         norm = _to_hashable(target)
         dbkey = _db_node_key(norm)
         target_id = self._session.scalar(
@@ -506,18 +639,17 @@ class _PredAdjDict(collections.abc.MutableMapping):
                 and_(
                     EdgeModel.graph_id == self._graph_id,
                     EdgeModel.target_id == target_id,
-                    EdgeModel.key.is_(None),
                 )
             )
         )
         source_ids = [row[0] for row in self._session.execute(stmt)]
         return _PredecessorInnerDict(
-            self._session, self._graph_id, target_id, source_ids
+            self._session, self._graph_id, target_id, source_ids,
         )
 
     def __setitem__(self, key, value):
         # NetworkX internal: self._pred[node] = {} during add_node
-        if isinstance(value, dict) and not self._multi:
+        if isinstance(value, dict):
             norm = _to_hashable(key)
             dbkey = _db_node_key(norm)
             existing_id = self._session.scalar(
@@ -536,8 +668,6 @@ class _PredAdjDict(collections.abc.MutableMapping):
                 )
                 self._session.add(node)
                 self._session.flush()
-        else:
-            raise NotImplementedError("Direct G._pred assignment not supported")
 
     def __delitem__(self, key):
         # Allow deletion for DiGraph remove_node: del _pred[n]
@@ -552,13 +682,12 @@ class _PredAdjDict(collections.abc.MutableMapping):
             )
         )
         if target_id is not None:
-            # Delete all incoming edges to this node
+            # Delete all incoming edges to this node (including multi-edges)
             self._session.execute(
                 delete(EdgeModel).where(
                     and_(
                         EdgeModel.graph_id == self._graph_id,
                         EdgeModel.target_id == target_id,
-                        EdgeModel.key.is_(None),
                     )
                 )
             )
@@ -674,7 +803,30 @@ class _PredecessorInnerDict(collections.abc.MutableMapping):
             )
 
     def __delitem__(self, key):
-        raise NotImplementedError("Direct _pred deletion not supported")
+        # Allow predecessor deletion for DiGraph/MultiDiGraph remove_node
+        if not self._source_ids:
+            return
+        norm = _to_hashable(key)
+        dbkey = _db_node_key(norm)
+        pred_id = self._session.scalar(
+            select(NodeModel.node_id).where(
+                and_(
+                    NodeModel.graph_id == self._graph_id,
+                    NodeModel.node_key == dbkey,
+                    NodeModel.node_id.in_(self._source_ids),
+                )
+            )
+        )
+        if pred_id is not None:
+            self._session.execute(
+                delete(EdgeModel).where(
+                    and_(
+                        EdgeModel.graph_id == self._graph_id,
+                        EdgeModel.source_id == pred_id,
+                        EdgeModel.target_id == self._target_id,
+                    )
+                )
+            )
 
     def __iter__(self):
         # Yield the node keys of all predecessors
@@ -793,9 +945,15 @@ class _NXSQLBase(nx.Graph):
         # Graph.add_edge adds both directions (self._adj[u][v] + self._adj[v][u])
         # which is wrong for directed graphs.
         if self._directed:
-            nx.DiGraph.add_edge(self, nu, nv, **attr)
+            if self._multigraph:
+                nx.MultiDiGraph.add_edge(self, nu, nv, **attr)
+            else:
+                nx.DiGraph.add_edge(self, nu, nv, **attr)
         else:
-            super().add_edge(nu, nv, **attr)
+            if self._multigraph:
+                nx.MultiGraph.add_edge(self, nu, nv, **attr)
+            else:
+                super().add_edge(nu, nv, **attr)
 
     def add_edges_from(self, ebunch_to_add, **attr):
         # Handle both (u, v) and (u, v, d) edge formats
@@ -808,7 +966,10 @@ class _NXSQLBase(nx.Graph):
                 u, v, d = edge
                 normed.append((_to_hashable(u), _to_hashable(v), d))
         if self._directed:
-            nx.DiGraph.add_edges_from(self, normed, **attr)
+            if self._multigraph:
+                nx.MultiDiGraph.add_edges_from(self, normed, **attr)
+            else:
+                nx.DiGraph.add_edges_from(self, normed, **attr)
         else:
             # For in-memory mode (no session), do it manually to avoid
             # issues with _dispatchable compiled bytecode
@@ -826,15 +987,24 @@ class _NXSQLBase(nx.Graph):
                     self._adj[u][v] = datadict
                     self._adj[v][u] = datadict
             else:
-                super().add_edges_from(normed, **attr)
+                if self._multigraph:
+                    nx.MultiGraph.add_edges_from(self, normed, **attr)
+                else:
+                    super().add_edges_from(normed, **attr)
 
     def remove_edge(self, u, v):
         nu = _to_hashable(u)
         nv = _to_hashable(v)
         if self._directed:
-            nx.DiGraph.remove_edge(self, nu, nv)
+            if self._multigraph:
+                nx.MultiDiGraph.remove_edge(self, nu, nv)
+            else:
+                nx.DiGraph.remove_edge(self, nu, nv)
         else:
-            super().remove_edge(nu, nv)
+            if self._multigraph:
+                nx.MultiGraph.remove_edge(self, nu, nv)
+            else:
+                super().remove_edge(nu, nv)
 
     def copy(self, as_view=False):
         """Return a shallow copy of the graph, backed by the same DB session."""

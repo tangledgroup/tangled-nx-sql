@@ -1,0 +1,4 @@
+digraph G {
+  "A" -> "B" [label="edge1"];
+  "B" -> "C" [label="edge2"];
+}
