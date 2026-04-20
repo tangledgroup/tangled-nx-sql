@@ -135,23 +135,44 @@ class _SimpleInnerAdjDict(collections.abc.MutableMapping):
     """Inner adjacency for Graph / DiGraph (non-multi)."""
 
     def __init__(
-        self, session: Session, graph_id: uuid.UUID, source_id: uuid.UUID, directed: bool
+        self, session: Session, graph_id: uuid.UUID, source_id: uuid.UUID | None, directed: bool
     ) -> None:
         self._session = session
         self._graph_id = graph_id
         self._source_id = source_id
         self._directed = directed
+        self._source_ids: list[uuid.UUID] | None = None
+
+    @classmethod
+    def from_source_ids(
+        cls, session: Session, graph_id: uuid.UUID, source_ids: list[uuid.UUID], directed: bool
+    ) -> "_SimpleInnerAdjDict":
+        """Create a virtual inner dict for multiple source nodes (used by _pred)."""
+        instance = cls(session, graph_id, None, directed)
+        instance._source_ids = source_ids
+        return instance
 
     def __getitem__(self, target: Any) -> dict[str, Any]:
         target_id = self._resolve_target_id(target)
-        stmt = select(EdgeModel.attributes).where(
-            and_(
-                EdgeModel.graph_id == self._graph_id,
-                EdgeModel.source_id == self._source_id,
-                EdgeModel.target_id == target_id,
-                EdgeModel.key.is_(None),
+        if self._source_ids is not None:
+            # Multi-source: check all source nodes
+            stmt = select(EdgeModel.attributes).where(
+                and_(
+                    EdgeModel.graph_id == self._graph_id,
+                    EdgeModel.source_id.in_(self._source_ids),
+                    EdgeModel.target_id == target_id,
+                    EdgeModel.key.is_(None),
+                )
             )
-        )
+        else:
+            stmt = select(EdgeModel.attributes).where(
+                and_(
+                    EdgeModel.graph_id == self._graph_id,
+                    EdgeModel.source_id == self._source_id,
+                    EdgeModel.target_id == target_id,
+                    EdgeModel.key.is_(None),
+                )
+            )
         attrs = self._session.scalar(stmt)
         if attrs is None:
             raise KeyError(target)
@@ -166,33 +187,71 @@ class _SimpleInnerAdjDict(collections.abc.MutableMapping):
         self._delete_edge(target_id)
 
     def __iter__(self):
-        stmt = (
-            select(NodeModel.node_key)
-            .select_from(EdgeModel)
-            .join(NodeModel, NodeModel.node_id == EdgeModel.target_id)
-            .where(
-                and_(
-                    EdgeModel.graph_id == self._graph_id,
-                    EdgeModel.source_id == self._source_id,
-                    EdgeModel.key.is_(None),
+        if self._source_ids is not None:
+            target_ids_stmt = (
+                select(EdgeModel.target_id)
+                .where(
+                    and_(
+                        EdgeModel.graph_id == self._graph_id,
+                        EdgeModel.source_id.in_(self._source_ids),
+                        EdgeModel.key.is_(None),
+                    )
                 )
             )
-        )
-        for (dbkey,) in self._session.execute(stmt):
-            yield _deserialize_node_key(dbkey)
+            target_ids = [row[0] for row in self._session.execute(target_ids_stmt)]
+            if target_ids:
+                node_stmt = (
+                    select(NodeModel.node_key)
+                    .where(
+                        and_(
+                            NodeModel.graph_id == self._graph_id,
+                            NodeModel.node_id.in_(target_ids),
+                        )
+                    )
+                )
+                for (dbkey,) in self._session.execute(node_stmt):
+                    yield _deserialize_node_key(dbkey)
+        else:
+            stmt = (
+                select(NodeModel.node_key)
+                .select_from(EdgeModel)
+                .join(NodeModel, NodeModel.node_id == EdgeModel.target_id)
+                .where(
+                    and_(
+                        EdgeModel.graph_id == self._graph_id,
+                        EdgeModel.source_id == self._source_id,
+                        EdgeModel.key.is_(None),
+                    )
+                )
+            )
+            for (dbkey,) in self._session.execute(stmt):
+                yield _deserialize_node_key(dbkey)
 
     def __len__(self) -> int:
-        stmt = (
-            select(func.count())
-            .select_from(EdgeModel)
-            .where(
-                and_(
-                    EdgeModel.graph_id == self._graph_id,
-                    EdgeModel.source_id == self._source_id,
-                    EdgeModel.key.is_(None),
+        if self._source_ids is not None:
+            stmt = (
+                select(func.count())
+                .select_from(EdgeModel)
+                .where(
+                    and_(
+                        EdgeModel.graph_id == self._graph_id,
+                        EdgeModel.source_id.in_(self._source_ids),
+                        EdgeModel.key.is_(None),
+                    )
                 )
             )
-        )
+        else:
+            stmt = (
+                select(func.count())
+                .select_from(EdgeModel)
+                .where(
+                    and_(
+                        EdgeModel.graph_id == self._graph_id,
+                        EdgeModel.source_id == self._source_id,
+                        EdgeModel.key.is_(None),
+                    )
+                )
+            )
         return self._session.scalar(stmt) or 0
 
     def _resolve_target_id(self, target: Any) -> uuid.UUID:
@@ -367,6 +426,166 @@ class _AdjacencyDict(collections.abc.MutableMapping):
         return self._session.scalar(stmt) or 0
 
 
+class _PredAdjDict(collections.abc.MutableMapping):
+    """G._pred – target → predecessor inner adjacency dict (reverse of _adj)."""
+
+    def __init__(
+        self, session: Session, graph_id: uuid.UUID, directed: bool, multi: bool
+    ) -> None:
+        self._session = session
+        self._graph_id = graph_id
+        self._directed = directed
+        self._multi = multi
+
+    def __getitem__(self, target: Any):
+        if self._multi:
+            raise NotImplementedError("MultiGraph/MultiDiGraph not implemented yet")
+
+        norm = _to_hashable(target)
+        dbkey = _db_node_key(norm)
+        target_id = self._session.scalar(
+            select(NodeModel.node_id).where(
+                and_(
+                    NodeModel.graph_id == self._graph_id,
+                    NodeModel.node_key == dbkey,
+                )
+            )
+        )
+        if target_id is None:
+            raise KeyError(target)
+
+        stmt = (
+            select(EdgeModel.source_id)
+            .where(
+                and_(
+                    EdgeModel.graph_id == self._graph_id,
+                    EdgeModel.target_id == target_id,
+                    EdgeModel.key.is_(None),
+                )
+            )
+        )
+        source_ids = [row[0] for row in self._session.execute(stmt)]
+        return _PredecessorInnerDict(
+            self._session, self._graph_id, target_id, source_ids
+        )
+
+    def __setitem__(self, key, value):
+        if isinstance(value, dict) and not self._multi:
+            norm = _to_hashable(key)
+            dbkey = _db_node_key(norm)
+            existing_id = self._session.scalar(
+                select(NodeModel.node_id).where(
+                    and_(
+                        NodeModel.graph_id == self._graph_id,
+                        NodeModel.node_key == dbkey,
+                    )
+                )
+            )
+            if existing_id is None:
+                node = NodeModel(
+                    graph_id=self._graph_id,
+                    node_key=dbkey,
+                    attributes={},
+                )
+                self._session.add(node)
+                self._session.flush()
+        else:
+            raise NotImplementedError("Direct G._pred assignment not supported")
+
+    def __delitem__(self, key):
+        raise NotImplementedError("Direct G._pred deletion not supported")
+
+    def __iter__(self):
+        stmt = select(NodeModel.node_key).where(NodeModel.graph_id == self._graph_id)
+        for (dbkey,) in self._session.execute(stmt):
+            yield _deserialize_node_key(dbkey)
+
+    def __len__(self) -> int:
+        stmt = (
+            select(func.count())
+            .select_from(NodeModel)
+            .where(NodeModel.graph_id == self._graph_id)
+        )
+        return self._session.scalar(stmt) or 0
+
+
+class _PredecessorInnerDict(collections.abc.MutableMapping):
+    """Inner adjacency for G._pred: maps predecessor node → edge attributes.
+
+    For a given target node T, _pred[T] returns a dict of {predecessor: attrs}
+    where edges go from predecessor → T.
+    """
+
+    def __init__(
+        self, session: Session, graph_id: uuid.UUID, target_id: uuid.UUID,
+        source_ids: list[uuid.UUID]
+    ) -> None:
+        self._session = session
+        self._graph_id = graph_id
+        self._target_id = target_id
+        self._source_ids = source_ids  # UUIDs of predecessor nodes
+
+    def __getitem__(self, pred_key: Any) -> dict[str, Any]:
+        if not self._source_ids:
+            raise KeyError(pred_key)
+        norm = _to_hashable(pred_key)
+        dbkey = _db_node_key(norm)
+        # Find which source_id matches this key
+        src_id = self._session.scalar(
+            select(NodeModel.node_id).where(
+                and_(
+                    NodeModel.graph_id == self._graph_id,
+                    NodeModel.node_key == dbkey,
+                    NodeModel.node_id.in_(self._source_ids),
+                )
+            )
+        )
+        if src_id is None:
+            raise KeyError(pred_key)
+        stmt = select(EdgeModel.attributes).where(
+            and_(
+                EdgeModel.graph_id == self._graph_id,
+                EdgeModel.source_id == src_id,
+                EdgeModel.target_id == self._target_id,
+                EdgeModel.key.is_(None),
+            )
+        )
+        attrs = self._session.scalar(stmt)
+        if attrs is None:
+            raise KeyError(pred_key)
+        return attrs or {}
+
+    def __setitem__(self, key, value):
+        raise NotImplementedError("Direct _pred assignment not supported")
+
+    def __delitem__(self, key):
+        raise NotImplementedError("Direct _pred deletion not supported")
+
+    def __iter__(self):
+        # Yield the node keys of all predecessors
+        stmt = (
+            select(NodeModel.node_key)
+            .where(
+                and_(
+                    NodeModel.graph_id == self._graph_id,
+                    NodeModel.node_id.in_(self._source_ids),
+                )
+            )
+        )
+        for (dbkey,) in self._session.execute(stmt):
+            yield _deserialize_node_key(dbkey)
+
+    def __len__(self) -> int:
+        if not self._source_ids:
+            return 0
+        stmt = (
+            select(func.count())
+            .where(NodeModel.node_id.in_(self._source_ids))
+            .where(NodeModel.graph_id == self._graph_id)
+        )
+        return self._session.scalar(stmt) or 0
+
+
 # =============================================================================
 # Public nx_sql graph classes (100% NetworkX API compatible)
 # =============================================================================
@@ -405,6 +624,14 @@ class _NXSQLBase(nx.Graph):
             directed=self._directed,
             multi=self._multigraph,
         )
+        if self._directed:
+            self._succ = self._adj
+            self._pred = _PredAdjDict(
+                self.session,
+                self.graph_id,
+                directed=True,
+                multi=self._multigraph,
+            )
 
     def add_node(self, node_for_adding, **attr):
         """Normalize node key so NetworkX stores the hashable form."""
