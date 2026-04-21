@@ -216,3 +216,7 @@ PLAN.md
 
 # Example output artifacts (generated at runtime)
 examples/**/*_output.png
+examples/**/*_output.gif
+examples/external/force.json
+examples/graphviz_drawing/*.dot
+cache/
