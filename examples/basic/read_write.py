@@ -10,12 +10,15 @@ from sqlalchemy.orm import sessionmaker
 
 import nx_sql
 from nx_sql.models import Base, Graph as GraphModel
+import sys; sys.path.insert(0, str(__import__('pathlib').Path(__file__).resolve().parent.parent.parent))
+from examples.utils import print_docstring
 
 engine = create_engine("sqlite:///nx_sql.db")
 Base.metadata.create_all(engine)
 Session = sessionmaker(bind=engine)
 
 
+@print_docstring
 def demo_read_write():
     """Build a graph, persist it, then reload from a fresh session."""
 

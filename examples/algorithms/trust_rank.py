@@ -12,6 +12,8 @@ from sqlalchemy.orm import sessionmaker
 
 import nx_sql
 from nx_sql.models import Base
+import sys; sys.path.insert(0, str(__import__('pathlib').Path(__file__).resolve().parent.parent.parent))
+from examples.utils import print_docstring
 
 engine = create_engine("sqlite:///nx_sql.db")
 Base.metadata.create_all(engine)
@@ -63,6 +65,7 @@ def trust_rank(G, seeds, damping=0.85, max_iter=100, tol=1.0e-6):
     return {nodes[i]: rank[i] for i in range(n)}
 
 
+@print_docstring
 def demo_trust_rank():
     """Compute TrustRank on a small web graph."""
 

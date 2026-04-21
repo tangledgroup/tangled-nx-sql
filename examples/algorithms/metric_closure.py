@@ -11,6 +11,8 @@ from sqlalchemy.orm import sessionmaker
 
 import nx_sql
 from nx_sql.models import Base
+import sys; sys.path.insert(0, str(__import__('pathlib').Path(__file__).resolve().parent.parent.parent))
+from examples.utils import print_docstring
 
 engine = create_engine("sqlite:///nx_sql.db")
 Base.metadata.create_all(engine)
@@ -42,6 +44,7 @@ def metric_closure(G, weight="weight"):
     return MC
 
 
+@print_docstring
 def demo_metric_closure():
     """Compute the metric closure of a weighted graph."""
 

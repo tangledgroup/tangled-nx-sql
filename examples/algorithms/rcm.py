@@ -12,6 +12,8 @@ from sqlalchemy.orm import sessionmaker
 
 import nx_sql
 from nx_sql.models import Base
+import sys; sys.path.insert(0, str(__import__('pathlib').Path(__file__).resolve().parent.parent.parent))
+from examples.utils import print_docstring
 
 engine = create_engine("sqlite:///nx_sql.db")
 Base.metadata.create_all(engine)
@@ -28,6 +30,7 @@ def _bandwidth(G, ordering):
     return max_diff
 
 
+@print_docstring
 def demo_rcm():
     """Apply Reverse Cuthill-McKee ordering to reduce matrix bandwidth."""
 

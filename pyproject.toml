@@ -34,7 +34,6 @@ Changelog = "https://github.com/tangledgroup/tangled-nx-sql/blob/main/CHANGELOG.
 
 [dependency-groups]
 dev = [
-    "pytest-aiohttp>=1.1.0",
     "ruff>=0.15.11",
     "ty>=0.0.31",
 ]
