@@ -689,17 +689,28 @@ class _NXSQLBase(nx.Graph):
             return
 
         if graph_id is None:
-            all_attrs = {**(attr or {})}
+            # Try to load by name for persistent reuse
+            existing = None
             if name is not None:
-                all_attrs["name"] = name
-            gmodel = GraphModel(
-                graph_type=self._graph_type,
-                name=name,
-                attributes=all_attrs or None,
-            )
-            self.session.add(gmodel)
-            self.session.commit()
-            self.graph_id = gmodel.graph_id
+                existing = self.session.scalar(
+                    select(GraphModel).where(GraphModel.name == name)
+                )
+            if existing:
+                self.graph_id = existing.graph_id
+                if existing.attributes:
+                    attr = {**existing.attributes, **(attr or {})}
+            else:
+                all_attrs = {**(attr or {})}
+                if name is not None:
+                    all_attrs["name"] = name
+                gmodel = GraphModel(
+                    graph_type=self._graph_type,
+                    name=name,
+                    attributes=all_attrs or None,
+                )
+                self.session.add(gmodel)
+                self.session.commit()
+                self.graph_id = gmodel.graph_id
         else:
             self.graph_id = graph_id
             gmodel = self.session.get(GraphModel, graph_id)
@@ -985,6 +996,22 @@ class _NXSQLBase(nx.Graph):
 
     def is_multigraph(self) -> bool:
         return self._multigraph
+
+    def delete(self) -> None:
+        """Delete this graph and all its nodes and edges from the DB."""
+        if self.session is None or not hasattr(self, 'graph_id'):
+            return
+        gid = self.graph_id
+        self.session.execute(
+            delete(NodeModel).where(NodeModel.graph_id == gid)
+        )
+        self.session.execute(
+            delete(EdgeModel).where(EdgeModel.graph_id == gid)
+        )
+        self.session.execute(
+            delete(GraphModel).where(GraphModel.graph_id == gid)
+        )
+        self.session.commit()
 
 
 class Graph(_NXSQLBase, nx.Graph):
