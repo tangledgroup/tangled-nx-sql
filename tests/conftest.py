@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import os
-import uuid
 
 import networkx as nx
 import pytest
@@ -58,26 +57,31 @@ def session(engine):
 
 
 def _sanitize_name(name: str) -> str:
-    """Sanitize test name for use as graph name in SQLite."""
-    return name.replace(".", "__")
+    """Sanitize test function name for use as graph name in SQLite.
+
+    The name is the test function name (e.g. ``test_add_nodes``). It already
+    starts with the ``test_`` prefix.  Dots are replaced so that class-based
+    test methods like ``TestFoo.test_bar`` become ``test_bar`` — only the
+    function name portion is kept.  Parametrized brackets ``[...]`` are
+    replaced with underscores.
+    """
+    # Keep only the function name (after the last dot if inside a class)
+    func_name = name.rsplit(".", 1)[-1]
+    # Replace parametrized brackets with underscores, strip trailing/leading
+    result = func_name.replace("[", "_").replace("]", "_")
+    return result.strip("_")
 
 
 # Graph factory fixtures — each creates a fresh nx_sql graph in the DB
 @pytest.fixture
 def Graph(session, request):
-    test_name = _sanitize_name(
-        f"{request.node.cls.__name__}.{request.node.name}"
-        if request.node.cls else request.node.name
-    )
+    test_name = _sanitize_name(request.node.name)
     return lambda name=None: nx_sql.Graph(session, name=name or test_name)
 
 
 @pytest.fixture
 def DiGraph(session, request):
-    test_name = _sanitize_name(
-        f"{request.node.cls.__name__}.{request.node.name}"
-        if request.node.cls else request.node.name
-    )
+    test_name = _sanitize_name(request.node.name)
     def _make_digraph(name=None):
         return nx_sql.DiGraph(session, name=name or test_name)
     return _make_digraph
@@ -85,19 +89,13 @@ def DiGraph(session, request):
 
 @pytest.fixture
 def MultiGraph(session, request):
-    test_name = _sanitize_name(
-        f"{request.node.cls.__name__}.{request.node.name}"
-        if request.node.cls else request.node.name
-    )
+    test_name = _sanitize_name(request.node.name)
     return lambda name=None: nx_sql.MultiGraph(session, name=name or test_name)
 
 
 @pytest.fixture
 def MultiDiGraph(session, request):
-    test_name = _sanitize_name(
-        f"{request.node.cls.__name__}.{request.node.name}"
-        if request.node.cls else request.node.name
-    )
+    test_name = _sanitize_name(request.node.name)
     return lambda name=None: nx_sql.MultiDiGraph(session, name=name or test_name)
 
 
