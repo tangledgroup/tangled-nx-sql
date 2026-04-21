@@ -7,6 +7,9 @@ This example requires mayavi (OpenGL-based 3D visualization), which has
 no command-line or headless alternative. Mayavi is a full GUI toolkit
 built on VTK and cannot run without an X11/display server.
 
+All other 3d_drawing examples have been ported to use matplotlib
+animation saved as GIF files instead.
+
 SKIP: Requires mayavi (no headless/CLI alternative).
 To run interactively: pip install mayavi && python examples/3d_drawing/mayavi2_spring.py
 """
