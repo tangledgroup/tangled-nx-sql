@@ -3,9 +3,8 @@
 Points
 ======
 
-This example requires geopandas/contextily/libpysal, which are not available.
+This example requires geopandas/contextily/libpysal for geographic data.
 
-SKIP: Requires geopandas, contextily, libpysal packages (not installed).
-To run: pip install geopandas contextily libpysal
+SKIP: Requires geopandas, contextily, libpysal (GIS libraries).
 """
-print("SKIPPED: This example requires 'geopandas', 'contextily', and 'libpysal'.")
+print("SKIPPED: This example requires geopandas/contextily/libpysal.")

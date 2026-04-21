@@ -3,9 +3,8 @@
 Polygons
 =======
 
-This example requires geopandas/libpysal, which are not available.
+This example requires geopandas/libpysal for geographic data.
 
-SKIP: Requires geopandas, libpysal packages (not installed).
-To run: pip install geopandas libpysal
+SKIP: Requires geopandas, libpysal (GIS libraries).
 """
-print("SKIPPED: This example requires 'geopandas' and 'libpysal'.")
+print("SKIPPED: This example requires geopandas/libpysal.")
