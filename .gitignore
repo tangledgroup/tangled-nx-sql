@@ -213,3 +213,6 @@ skills
 *.sqlite
 *.sqlite3
 PLAN.md
+
+# Example output artifacts (generated at runtime)
+examples/**/*_output.png
