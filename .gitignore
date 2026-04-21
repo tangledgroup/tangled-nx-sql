@@ -219,4 +219,7 @@ examples/**/*_output.png
 examples/**/*_output.gif
 examples/external/force.json
 examples/graphviz_drawing/*.dot
+# OSMnx-generated graph files (non-deterministic, regenerate each run)
+examples/data/geospatial/sf_street_network.gpkg
+examples/data/geospatial/sf_street_network.graphml
 cache/
