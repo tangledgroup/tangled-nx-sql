@@ -36,6 +36,7 @@ Changelog = "https://github.com/tangledgroup/tangled-nx-sql/blob/main/CHANGELOG.
 dev = [
     "ruff>=0.15.11",
     "ty>=0.0.31",
+    "scikit-learn>=1.5.0",
 ]
 
 [tool.ruff]
