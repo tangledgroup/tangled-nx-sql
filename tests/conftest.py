@@ -21,9 +21,13 @@ DB_PATH = os.path.join(os.path.dirname(__file__), "test_nx_sql.db")
 def engine():
     """Single SQLite file-based DB for entire test session.
     
-    DB is preserved after tests so you can review data:
-        sqlite3 tests/test_nx_sql.db "SELECT name, id FROM graphs ORDER BY name;"
+    DB is deleted if it exists before the session starts (fresh results),
+    then preserved after all tests complete for manual review:
+        sqlite3 tests/test_nx_sql.db "SELECT name FROM graphs ORDER BY name;"
     """
+    if os.path.exists(DB_PATH):
+        os.remove(DB_PATH)
+
     eng = create_engine(f"sqlite:///{DB_PATH}", echo=False)
 
     @event.listens_for(eng, "connect")
