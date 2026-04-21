@@ -1,6 +1,6 @@
 """Demonstrate basic undirected Graph operations with nx_sql.
 
-Mirrors networkx/examples/basic/simple_graph.py but uses SQLAlchemy persistence.
+Mirrors networkx/examples/basic/plot_simple_graph.py but uses SQLAlchemy persistence.
 Shows node creation, edge addition, iteration, and attribute access.
 """
 
