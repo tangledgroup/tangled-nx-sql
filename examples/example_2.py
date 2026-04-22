@@ -58,9 +58,9 @@ def demo_random_graph():
         ax.set_title(f"Erdős-Rényi Graph (n={n_nodes}, p=0.15)", fontsize=14)
         ax.axis("off")
         plt.tight_layout()
-        plt.savefig("examples/example2_random_graph.png", dpi=150, bbox_inches="tight")
+        plt.savefig("examples/example_2_random_graph.png", dpi=150, bbox_inches="tight")
         plt.close()
-        print("Plot saved to examples/example2_random_graph.png")
+        print("Plot saved to examples/example_2_random_graph.png")
 
         session.commit()
 
@@ -107,9 +107,9 @@ def demo_davis_southern_women():
         ax.set_title("Davis Southern Women Network", fontsize=14)
         ax.axis("off")
         plt.tight_layout()
-        plt.savefig("examples/example2_davis_women.png", dpi=150, bbox_inches="tight")
+        plt.savefig("examples/example_2_davis_women.png", dpi=150, bbox_inches="tight")
         plt.close()
-        print("Plot saved to examples/example2_davis_women.png")
+        print("Plot saved to examples/example_2_davis_women.png")
 
         session.commit()
 
