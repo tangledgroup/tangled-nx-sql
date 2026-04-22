@@ -53,38 +53,26 @@ AGE_GROUPS = [20, 30, 40, 50, 60]
 
 # ── Relationship Definitions ─────────────────────────────────────────────────
 
-OWNS_DATA = {
-    20: {"corolla": 12, "civic": 11, "golf": 8, "tucson": 6, "model3": 7, "outback": 3},
-    30: {"modely": 9, "tucson": 8, "golf": 6, "civic": 5, "corolla": 4, "model3": 8, "outback": 5, "f150": 4},
-    40: {"gle": 8, "f150": 6, "modely": 8, "outback": 7, "bmw3": 6},
-    50: {"f150": 12, "gle": 8, "bmw3": 8},
-    60: {"corolla": 10, "civic": 9, "outback": 8, "model3": 7},
+AGE_CAR_CONNECTIONS = {
+    20: ["corolla", "civic", "golf", "tucson", "model3", "outback"],
+    30: ["modely", "tucson", "golf", "civic", "corolla", "model3", "outback", "f150"],
+    40: ["gle", "f150", "modely", "outback", "bmw3"],
+    50: ["f150", "gle", "bmw3"],
+    60: ["corolla", "civic", "outback", "model3"],
 }
 
-LIVES_IN_DATA = {
-    "US": {
-        "newyork":   {20: 16, 30: 22, 40: 21, 50: 20, 60: 21},
-        "losangeles":{20: 18, 30: 24, 40: 20, 50: 19, 60: 19},
-        "chicago":   {20: 15, 30: 21, 40: 22, 50: 21, 60: 21},
-        "detroit":   {20: 14, 30: 20, 40: 24, 50: 22, 60: 20},
-    },
-    "Europe": {
-        "london":   {20: 15, 30: 21, 40: 22, 50: 21, 60: 21},
-        "berlin":   {20: 16, 30: 22, 40: 22, 50: 20, 60: 20},
-        "paris":    {20: 14, 30: 20, 40: 23, 50: 22, 60: 21},
-    },
-    "Serbia": {
-        "belgrade":   {20: 20, 30: 26, 40: 22, 50: 18, 60: 14},
-        "novisad":    {20: 19, 30: 25, 40: 23, 50: 18, 60: 15},
-        "nis":        {20: 22, 30: 24, 40: 21, 50: 18, 60: 15},
-    },
+CITY_AGE_CONNECTIONS = {
+    "US": ["newyork", "losangeles", "chicago", "detroit"],
+    "Europe": ["london", "berlin", "paris"],
+    "Serbia": ["belgrade", "novisad", "nis"],
 }
-
-LOCATED_IN_CARS_BY_REGION = {
-    "US": [c["id"] for c in CARS],  # all 10
+CITY_CARS_BY_REGION = {
+    "US": [c["id"] for c in CARS],
     "Europe": ["corolla", "civic", "bmw3", "gle", "model3", "modely", "golf", "outback"],
     "Serbia": ["corolla", "civic", "tucson", "golf", "model3", "outback"],
 }
+
+
 
 COMPARES_WITH = [
     ("corolla", "civic"),
@@ -95,41 +83,10 @@ COMPARES_WITH = [
     ("golf", "outback"),
 ]
 
-MANUFACTURED_IN = [
-    ("corolla",  "Toyota City, Japan"),
-    ("civic",    "Greensburg, IN"),
-    ("f150",     "Dearborn, MI"),
-    ("bmw3",     "Munich, Germany"),
-    ("gle",      "Tuscaloosa, AL"),
-    ("tucson",   "Montgomery, AL"),
-    ("model3",   "Fremont, CA"),
-    ("modely",   "Fremont, CA"),
-    ("golf",     "Wolfsburg, Germany"),
-    ("outback",  "Lafayette, IN"),
-]
-
 # ── Indexes ──────────────────────────────────────────────────────────────────
 
 CAR_BY_ID = {c["id"]: c for c in CARS}
 CITY_BY_ID = {c["id"]: c for c in CITIES}
-
-
-def _pick_cities_for_age(age: int) -> list[str]:
-    if age <= 30:
-        return ["newyork", "losangeles"]
-    elif age == 40:
-        return ["chicago", "detroit"]
-    elif age == 50:
-        return ["houston", "phoenix"]
-    else:
-        return ["miami", "losangeles"]
-
-
-def _income_for_region_age(region: str, age: int) -> float:
-    base = {"US": 65, "Europe": 50, "Serbia": 18}[region]
-    return round(base + (40 - age) * 0.5, 1)
-
-
 # ── Demo Function ────────────────────────────────────────────────────────────
 
 def demo_demographics():
@@ -159,20 +116,20 @@ def demo_demographics():
         print("Adding edges...")
 
         # owns: age ↔ car
-        for age, cars_dict in OWNS_DATA.items():
-            for car_id in cars_dict:
+        for age, car_ids in AGE_CAR_CONNECTIONS.items():
+            for car_id in car_ids:
                 G.add_edge(age, car_id, relation_type="owns")
 
-        # connected: city ↔ car (car is sold in this city)
-        for region, car_ids in LOCATED_IN_CARS_BY_REGION.items():
-            for city_id in LIVES_IN_DATA[region]:
+        # connected: city ↔ car
+        for region, car_ids in CITY_CARS_BY_REGION.items():
+            for city_id in CITY_AGE_CONNECTIONS[region]:
                 for car_id in car_ids:
                     G.add_edge(city_id, car_id, relation_type="connected")
 
-        # connected: city ↔ age (age group present in this city)
-        for region, cities_dict in LIVES_IN_DATA.items():
-            for city_id in cities_dict:
-                for age in cities_dict[city_id]:
+        # connected: city ↔ age
+        for region, city_ids in CITY_AGE_CONNECTIONS.items():
+            for city_id in city_ids:
+                for age in AGE_GROUPS:
                     G.add_edge(city_id, age, relation_type="connected")
 
         # compares_with: car ↔ car
@@ -211,16 +168,69 @@ def demo_demographics():
         print(f"City nodes:    {len(city_nodes)}")
         print(f"Age nodes:     {len(age_nodes)}")
 
-        # 4. Visualize ──────────────────────────────────────────────────────
-        _plot_demographics(G, rel_counts, car_nodes, city_nodes, age_nodes)
+        # 4. Query example: who drives Corolla?
+        print("\n── Query: Who drives Corolla? ──────────────────────────────")
+        corolla_id = "corolla"
+        if corolla_id in G:
+            # Age groups that own Corolla
+            owns_edges = [(u, v, d) for u, v, d in G.edges(corolla_id, data=True)
+                          if d.get("relation_type") == "owns"]
+            age_drivers = []
+            for u, v, _ in owns_edges:
+                other = v if u == corolla_id else u
+                if isinstance(other, int):
+                    age_drivers.append(f"{other}s")
+            print(f"  Age groups that own Corolla: {', '.join(age_drivers)}")
+
+            # Cities where Corolla is sold
+            connected_cities = [(u, v, d) for u, v, d in G.edges(corolla_id, data=True)
+                                if d.get("relation_type") == "connected"]
+            city_names = []
+            for u, v, _ in connected_cities:
+                other = v if u == corolla_id else u
+                if isinstance(other, str) and other in CITY_BY_ID:
+                    city_names.append(CITY_BY_ID[other]["name"])
+            city_names = sorted(set(city_names))
+            print(f"  Cities where Corolla is sold ({len(city_names)}): {', '.join(sorted(city_names))}")
+        else:
+            print("  Corolla not found in graph.")
+
+        # 5. Visualize ──────────────────────────────────────────────────
+        _plot_demographics(G, rel_counts, car_nodes, city_nodes, age_nodes,
+                           highlight_node=None)
+
+        # 6. Corolla subgraph view
+        _plot_demographics(G, rel_counts, car_nodes, city_nodes, age_nodes,
+                           highlight_node="corolla", save_path="examples/example_3_corolla.png")
 
 
 # ── Visualization ────────────────────────────────────────────────────────────
 
-def _plot_demographics(G, rel_counts, car_nodes, city_nodes, age_nodes):
-    """Render the demographic network as a PNG with color-coded nodes and edges."""
+def _plot_demographics(G, rel_counts, car_nodes, city_nodes, age_nodes,
+                       highlight_node=None, save_path="examples/example_3_demographics.png"):
+    """Render the demographic network as a PNG with color-coded nodes and edges.
+
+    If highlight_node is provided, only that node's neighbors are shown
+    (subgraph view).
+    """
 
     fig, ax = plt.subplots(figsize=(16, 12))
+
+    # Optional: filter to subgraph around a highlighted node
+    if highlight_node is not None:
+        # Only include nodes directly connected via "owns" or "connected"
+        # (exclude "compares_with" which would show competitor cars)
+        relevant_edges = [(u, v) for u, v, d in G.edges(data=True)
+                          if d.get("relation_type") in ("owns", "connected")
+                          and (u == highlight_node or v == highlight_node)]
+        neighbors = set()
+        for u, v in relevant_edges:
+            other = v if u == highlight_node else u
+            neighbors.add(other)
+        neighbors.add(highlight_node)
+        G_show = G.subgraph(neighbors).copy()
+    else:
+        G_show = G
 
     # ── Edge colors by relation_type ──────────────────────────────────
     EDGE_STYLES = {
@@ -230,8 +240,7 @@ def _plot_demographics(G, rel_counts, car_nodes, city_nodes, age_nodes):
     }
 
     # ── Layout: force-directed with type-based bias ───────────────────
-    # Use a wider layout to separate the three node layers clearly
-    pos = nx.spring_layout(G, seed=42, k=3.0, iterations=80, dim=2)
+    pos = nx.spring_layout(G_show, seed=42, k=3.0, iterations=80, dim=2)
 
     # Hard-bias x positions so each type forms a distinct vertical band
     for node in pos:
@@ -259,7 +268,7 @@ def _plot_demographics(G, rel_counts, car_nodes, city_nodes, age_nodes):
     # ── Draw edges by relation type ───────────────────────────────────
     linestyle_map = {"-": "solid", "--": "dashed", ":": "dotted", "-.": "dashdot"}
     for rel_type, style in EDGE_STYLES.items():
-        edges = [(u, v) for u, v, d in G.edges(data=True) if d.get("relation_type") == rel_type]
+        edges = [(u, v) for u, v, d in G_show.edges(data=True) if d.get("relation_type") == rel_type]
         if not edges:
             continue
         # Draw each edge individually for better control over overlapping segments
@@ -278,7 +287,7 @@ def _plot_demographics(G, rel_counts, car_nodes, city_nodes, age_nodes):
     for n in city_nodes:
         node_colors[n] = "#4daf4a"
     node_sizes = []
-    for n in G.nodes():
+    for n in G_show.nodes():
         if isinstance(n, int):
             node_sizes.append(800)
         elif n in car_nodes:
@@ -286,20 +295,23 @@ def _plot_demographics(G, rel_counts, car_nodes, city_nodes, age_nodes):
         else:
             node_sizes.append(250)  # city
 
-    nx.draw_networkx_nodes(G, pos, node_color=[node_colors[n] for n in G.nodes()],
+    nx.draw_networkx_nodes(G_show, pos, node_color=[node_colors[n] for n in G_show.nodes()],
                            node_size=node_sizes, alpha=0.9, ax=ax)
 
     # ── Labels ────────────────────────────────────────────────────────
-    age_labels = {n: f"{int(n)}s" for n in age_nodes}
-    nx.draw_networkx_labels(G, pos, labels=age_labels, font_size=12, font_weight="bold",
+    age_labels = {n: f"{int(n)}s" for n in age_nodes if n in G_show}
+    nx.draw_networkx_labels(G_show, pos, labels=age_labels, font_size=12, font_weight="bold",
                             font_family="sans-serif", ax=ax)
 
-    # Car model labels — top 12 by degree
-    car_degrees = {n: G.degree(n) for n in car_nodes}
-    top_cars = sorted(car_degrees, key=car_degrees.get, reverse=True)[:12]
-    car_labels = {n: CAR_BY_ID[n]["model"] for n in top_cars if n in pos}
-    nx.draw_networkx_labels(G, pos, labels=car_labels, font_size=7,
+    # Car model labels — all cars in subgraph
+    car_labels = {n: CAR_BY_ID[n]["model"] for n in car_nodes if n in G_show}
+    nx.draw_networkx_labels(G_show, pos, labels=car_labels, font_size=7,
                             font_family="monospace", ax=ax)
+
+    # City labels — all cities in subgraph
+    city_labels = {n: CITY_BY_ID[n]["name"] for n in city_nodes if n in G_show}
+    nx.draw_networkx_labels(G_show, pos, labels=city_labels, font_size=7,
+                            font_family="sans-serif", ax=ax)
 
     # ── Legend ────────────────────────────────────────────────────────
     from matplotlib.lines import Line2D
@@ -327,13 +339,18 @@ def _plot_demographics(G, rel_counts, car_nodes, city_nodes, age_nodes):
     ax.legend(handles=node_legend + edge_legend, loc="lower left", fontsize=8,
               title="Legend", title_fontsize=9, framealpha=0.9)
 
-    ax.set_title("Car × City × Age Demographic Network\n10 cars · 10 cities · 5 age groups",
-                 fontsize=14, fontweight="bold", pad=20)
+    if highlight_node is not None:
+        node_label = CAR_BY_ID[highlight_node]["model"] if highlight_node in CAR_BY_ID else str(highlight_node)
+        ax.set_title(f"Who drives {node_label}?\nNeighbors of {CAR_BY_ID.get(highlight_node, {}).get('model', highlight_node)}",
+                     fontsize=14, fontweight="bold", pad=20)
+    else:
+        ax.set_title("Car × City × Age Demographic Network\n10 cars · 10 cities · 5 age groups",
+                     fontsize=14, fontweight="bold", pad=20)
     ax.axis("off")
     plt.tight_layout()
-    plt.savefig("examples/example_3_demographics.png", dpi=150, bbox_inches="tight")
+    plt.savefig(save_path, dpi=150, bbox_inches="tight")
     plt.close()
-    print("\nPlot saved to examples/example_3_demographics.png")
+    print(f"\nPlot saved to {save_path}")
 
 
 if __name__ == "__main__":
