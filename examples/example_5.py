@@ -9,11 +9,11 @@ Deterministic graph generation (SEED=42) with exactly:
 Edges:
   - headquarters       : CarManufacturer → City
   - produces            : CarManufacturer → CarModel
-  - owns                : OwnerProfile → CarModel
+  - owns                : OwnerProfile → CarModel (1-3 per owner)
   - sold_in             : CarModel → City
-  - resides_in          : OwnerProfile → City
+  - resides_in          : OwnerProfile → City (home city)
+  - works_in            : OwnerProfile → City (work city, different from home)
   - competes_with       : CarModel ↔ CarModel (same type, similar HP)
-  - shares_hobby        : OwnerProfile ↔ OwnerProfile (shared hobbies)
   - neighboring_country : City ↔ City (same country)
   - same_hq             : CarManufacturer ↔ CarManufacturer (same city)
 
@@ -56,13 +56,13 @@ TYPE_COLORS = {
 EDGE_STYLES = {
     "same_hq":           ("#60A5FA", 0.04, 0.3),
     "neighboring_country": ("#06B6D4", 0.08, 0.4),
-    "shares_hobby":      ("#F97316", 0.10, 0.5),
     "competes_with":     ("#EF4444", 0.12, 0.6),
     "sold_in":           ("#8B5CF6", 0.12, 0.5),
     "resides_in":        ("#A78BFA", 0.15, 0.6),
     "headquarters":      ("#3B82F6", 0.30, 1.0),
     "produces":          ("#10B981", 0.35, 1.2),
     "owns":              ("#F59E0B", 0.40, 1.5),
+    "works_in":          ("#EC4899", 0.15, 0.6),
 }
 
 # ── Reference data ───────────────────────────────────────────────────────────
@@ -314,6 +314,9 @@ def generate_graph():
         for i in range(100):
             city_idx = i % len(CITIES)
             city = CITIES[city_idx]
+            # Pick a different work city (live and work in two different cities)
+            work_city_idx = (city_idx + 1) % len(CITIES)
+            work_city = CITIES[work_city_idx]
             attrs = {
                 "entity_type": "OwnerProfile",
                 "age": rng.randint(19, 80),
@@ -326,6 +329,8 @@ def generate_graph():
                     if rng.random() > 0.5 else []),
                 "city": city[0],
                 "country": city[1],
+                "work_city": work_city[0],
+                "work_country": work_city[1],
             }
             key = f"OwnerProfile_{i}"
             G.add_node(key, **attrs)
@@ -364,9 +369,9 @@ def generate_graph():
                 G.add_edge(manufacturer_keys[mi], car_model_keys[start + ci],
                            edge_type="produces")
 
-        # owns: OwnerProfile → CarModel (each owner owns 1-2 cars)
+        # owns: OwnerProfile → CarModel (each owner owns 1-3 cars)
         for oi, ok in enumerate(owner_keys):
-            num_cars = 1 if oi % 3 != 0 else 2
+            num_cars = rng.randint(1, 3)
             for c in range(num_cars):
                 car_idx = (oi * 7 + c * 13) % len(car_model_keys)
                 G.add_edge(ok, car_model_keys[car_idx], edge_type="owns")
@@ -377,10 +382,15 @@ def generate_graph():
             for ck in sold_cities:
                 G.add_edge(car_model_keys[cm_idx], ck, edge_type="sold_in")
 
-        # resides_in: OwnerProfile → City
+        # resides_in: OwnerProfile → City (home)
         for oi, ok in enumerate(owner_keys):
             city_idx = oi % len(city_keys)
             G.add_edge(ok, city_keys[city_idx], edge_type="resides_in")
+
+        # works_in: OwnerProfile → City (work, different from home)
+        for oi, ok in enumerate(owner_keys):
+            work_city_idx = (oi + 1) % len(city_keys)
+            G.add_edge(ok, city_keys[work_city_idx], edge_type="works_in")
 
         # competes_with: CarModel ↔ CarModel (same type, similar HP)
         car_types = {}
@@ -401,29 +411,6 @@ def generate_graph():
                 for cand in candidates[:3]:
                     G.add_edge(car_model_keys[idx], car_model_keys[cand],
                                edge_type="competes_with")
-
-        # shares_hobby: OwnerProfile ↔ OwnerProfile
-        owner_hobbies = {}
-        for oi in range(len(owner_keys)):
-            owner_hobbies[oi] = set(G.nodes[owner_keys[oi]].get("hobbies", []))
-
-        for oi in range(len(owner_keys)):
-            my_hobbies = owner_hobbies[oi]
-            if not my_hobbies:
-                continue
-            scores = []
-            for oj in range(len(owner_keys)):
-                if oj == oi:
-                    continue
-                shared = len(my_hobbies & owner_hobbies[oj])
-                if shared > 0:
-                    scores.append((shared, oj))
-            scores.sort(key=lambda x: (-x[0], x[1]))
-            for _, oj in scores[:3]:
-                shared = my_hobbies & owner_hobbies[oj]
-                G.add_edge(owner_keys[oi], owner_keys[oj],
-                           edge_type="shares_hobby",
-                           shared_hobbies=sorted(shared))
 
         # neighboring_country: City ↔ City (same country)
         cities_by_country = {}
@@ -532,8 +519,8 @@ def plot_graph(G, partition, pos):
         edge_groups.setdefault(etype, []).append((u, v))
 
     edge_order = ["same_hq", "neighboring_country",
-                  "shares_hobby", "competes_with",
-                  "sold_in", "resides_in",
+                  "competes_with",
+                  "sold_in", "resides_in", "works_in",
                   "headquarters", "produces", "owns"]
 
     for etype in edge_order:
