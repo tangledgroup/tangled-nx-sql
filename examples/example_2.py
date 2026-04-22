@@ -17,7 +17,7 @@ from sqlalchemy.orm import sessionmaker
 import nx_sql
 from nx_sql.models import Base
 
-engine = create_engine("sqlite:///nx_sql.db")
+engine = create_engine("sqlite:///example_2.db")
 Base.metadata.create_all(engine)
 Session = sessionmaker(bind=engine)
 

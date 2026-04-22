@@ -9,7 +9,7 @@ import sys; sys.path.insert(0, str(__import__('pathlib').Path(__file__).resolve(
 from examples.utils import print_docstring
 
 
-engine = create_engine("sqlite:///nx_sql.db")
+engine = create_engine("sqlite:///example_0.db")
 Base.metadata.create_all(engine)
 Session = sessionmaker(bind=engine)
 

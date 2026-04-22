@@ -17,7 +17,7 @@ import nx_sql
 from nx_sql.models import Base
 
 
-engine = create_engine("sqlite:///nx_sql.db")
+engine = create_engine("sqlite:///example_4.db")
 Base.metadata.create_all(engine)
 Session = sessionmaker(bind=engine)
 
@@ -196,7 +196,7 @@ def random_city() -> dict:
 
 
 def demo4():
-    """Generate 1000 random nodes across 4 entity types with no edges."""
+    """Generate 1000 random nodes across 4 entity types with deterministic edges."""
 
     with Session() as session:
         G = nx_sql.DiGraph(session, name="example4_random_nodes")
@@ -206,12 +206,41 @@ def demo4():
         generators = [random_company, random_car, random_owner, random_city]
         labels = ["CarManufacturer", "CarModel", "OwnerProfile", "City"]
 
+        node_keys = []
         for label, count, gen in zip(labels, node_counts, generators):
+            keys = []
             for i in range(count):
                 attrs = gen()
-                # Use a unique string key so random collisions don't merge nodes
                 node_key = f"{label}_{i}"
+                keys.append(node_key)
                 G.add_node(node_key, **attrs)
+            node_keys.append(keys)
+
+        # --- Deterministic edges ---
+
+        # 1. Company → City (headquarters): each company links to a city
+        for i, company in enumerate(COMPANIES):
+            if i < len(node_keys[0]):
+                G.add_edge(f"CarManufacturer_{i}", f"City_{i % len(node_keys[3])}",
+                           edge_type="headquarters")
+
+        # 2. Company → CarModel (production): each company produces some car models
+        for ci, company in enumerate(COMPANIES):
+            # Each company produces 1-3 models
+            num_models = min(len(CARS) // len(COMPANIES) + 1, 3)
+            start = ci * num_models
+            for j in range(num_models):
+                car_idx = (start + j) % len(node_keys[1])
+                G.add_edge(f"CarManufacturer_{ci}", f"CarModel_{car_idx}",
+                           edge_type="produces")
+
+        # 3. OwnerProfile → CarModel (ownership): each owner owns 1-2 cars
+        for oi in range(len(node_keys[2])):
+            num_cars = 1 if oi % 3 != 0 else 2
+            for c in range(num_cars):
+                car_idx = (oi * 7 + c * 13) % len(node_keys[1])
+                G.add_edge(f"OwnerProfile_{oi}", f"CarModel_{car_idx}",
+                           edge_type="owns")
 
         print(f"Graph: {G.name}")
         print(f"Nodes: {G.number_of_nodes()}")
