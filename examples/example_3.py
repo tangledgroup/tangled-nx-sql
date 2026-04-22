@@ -120,17 +120,19 @@ def demo_demographics():
             for car_id in car_ids:
                 G.add_edge(age, car_id, relation_type="owns")
 
-        # connected: city ↔ car
+        # connected: city ↔ car (limit each city to ~70% of available cars)
         for region, car_ids in CITY_CARS_BY_REGION.items():
             for city_id in CITY_AGE_CONNECTIONS[region]:
-                for car_id in car_ids:
-                    G.add_edge(city_id, car_id, relation_type="connected")
+                for i, car_id in enumerate(car_ids):
+                    if i % 10 < 7:  # ~70% retention
+                        G.add_edge(city_id, car_id, relation_type="connected")
 
-        # connected: city ↔ age
+        # connected: city ↔ age (each city connects to 3 out of 5 age groups)
         for region, city_ids in CITY_AGE_CONNECTIONS.items():
             for city_id in city_ids:
-                for age in AGE_GROUPS:
-                    G.add_edge(city_id, age, relation_type="connected")
+                for age_idx, age in enumerate(AGE_GROUPS):
+                    if (age_idx + hash(city_id) % 5) < 3:  # 3/5 = 60% retention
+                        G.add_edge(city_id, age, relation_type="connected")
 
         # compares_with: car ↔ car
         for comp in COMPARES_WITH:
