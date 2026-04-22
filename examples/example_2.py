@@ -1,4 +1,5 @@
-"""Generate a random graph and draw it to file.
+"""
+Generate a random graph and draw it to file.
 
 Demonstrates creating an nx_sql graph from a NetworkX random graph,
 running algorithms, and rendering a visual plot.
