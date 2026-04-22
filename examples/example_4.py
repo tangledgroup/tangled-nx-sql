@@ -1,4 +1,5 @@
-"""Example 4 – generate 1000 random nodes across 4 entity types with rich attributes.
+"""Example 4 – generate 1000 random nodes across 4 entity types with rich attributes
+and deterministic analytical edges.
 
 Entity types:
   - CarManufacturer (company bio, founded year, headquarters city, country)
@@ -6,7 +7,9 @@ Entity types:
   - OwnerProfile (age, gender, occupation, income_bracket, hobbies)
   - City (population, country, timezone, area_km2, climate)
 
-No edges are created. All nodes are persisted to the database."""
+All randomness is driven by a single seeded RNG (SEED=42).
+Every run produces the identical graph: same nodes, same attributes, same edges.
+"""
 
 import random
 import networkx as nx
@@ -15,6 +18,8 @@ from sqlalchemy.orm import sessionmaker
 
 import nx_sql
 from nx_sql.models import Base
+
+SEED = 42
 
 
 engine = create_engine("sqlite:///example_4.db")
@@ -144,24 +149,28 @@ HOBBIES = [
     ["model building", "board games"],
 ]
 
-GENDERS = ["male", "female", "non-binary"]
+GENDERS = ["male", "female"]
 
 
-def random_company() -> dict:
-    city = random.choice(CITIES)
+def random_company(rng: random.Random) -> dict:
+    """Generate a deterministic company from the seeded RNG."""
+    city = rng.choice(CITIES)
     return {
-        "name": random.choice(COMPANIES),
-        "founded": random.randint(1900, 1990),
+        "entity_type": "CarManufacturer",
+        "name": rng.choice(COMPANIES),
+        "founded": rng.randint(1900, 1990),
         "headquarters": {"city": city[0], "country": city[1]},
-        "employee_count": random.randint(500, 200000),
-        "revenue_billion_usd": round(random.uniform(1, 300), 1),
-        "market": random.choice(["domestic", "international", "global"]),
+        "employee_count": rng.randint(500, 200000),
+        "revenue_billion_usd": round(rng.uniform(1, 300), 1),
+        "market": rng.choice(["domestic", "international", "global"]),
     }
 
 
-def random_car() -> dict:
-    template = random.choice(CARS)
+def random_car(rng: random.Random) -> dict:
+    """Generate a deterministic car from the seeded RNG."""
+    template = rng.choice(CARS)
     return {
+        "entity_type": "CarModel",
         "name": template[0],
         "type": template[1],
         "engine": template[2],
@@ -172,31 +181,50 @@ def random_car() -> dict:
     }
 
 
-def random_owner() -> dict:
+def random_owner(rng: random.Random) -> dict:
+    """Generate a deterministic owner from the seeded RNG."""
     return {
-        "age": random.randint(18, 85),
-        "gender": random.choice(GENDERS),
-        "occupation": random.choice(OCCUPATIONS),
-        "income_bracket": random.choice(["low", "middle", "upper_middle", "high", "ultra_high"]),
-        "hobbies": random.choice(HOBBIES),
-        "years_of_ownership": random.randint(0, 30),
+        "entity_type": "OwnerProfile",
+        "age": rng.randint(18, 85),
+        "gender": rng.choice(GENDERS),
+        "occupation": rng.choice(OCCUPATIONS),
+        "income_bracket": rng.choice(["low", "middle", "upper_middle", "high", "ultra_high"]),
+        "hobbies": rng.choice(HOBBIES),
+        "years_of_ownership": rng.randint(0, 30),
     }
 
 
-def random_city() -> dict:
-    template = random.choice(CITIES)
+def random_city(rng: random.Random) -> dict:
+    """Generate a deterministic city from the seeded RNG."""
+    template = rng.choice(CITIES)
     return {
+        "entity_type": "City",
         "name": template[0],
         "country": template[1],
         "timezone": template[2],
         "area_km2": template[3],
         "climate": template[4],
-        "population": random.randint(10000, 15000000),
+        "population": rng.randint(10000, 15000000),
     }
 
 
 def demo4():
-    """Generate 1000 random nodes across 4 entity types with deterministic edges."""
+    """Generate 1000 random nodes across 4 entity types with deterministic edges.
+
+    All randomness uses a single seeded RNG (SEED=42).
+    Every run produces the identical graph.
+    """
+    rng = random.Random(SEED)
+
+    # Remove stale DB to avoid mixing old data
+    import os
+    db_path = "example_4.db"
+    if os.path.exists(db_path):
+        os.remove(db_path)
+
+    engine = create_engine(f"sqlite:///{db_path}")
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine)
 
     with Session() as session:
         G = nx_sql.DiGraph(session, name="example4_random_nodes")
@@ -210,23 +238,30 @@ def demo4():
         for label, count, gen in zip(labels, node_counts, generators):
             keys = []
             for i in range(count):
-                attrs = gen()
+                attrs = gen(rng)
                 node_key = f"{label}_{i}"
                 keys.append(node_key)
                 G.add_node(node_key, **attrs)
             node_keys.append(keys)
 
-        # --- Deterministic edges ---
+        # =====================================================================
+        # Edge Layer 1: Company → City (headquarters)
+        # Each company links to one city based on its HQ attribute.
+        # =====================================================================
+        for i in range(len(node_keys[0])):
+            comp_attrs = G.nodes[f"CarManufacturer_{i}"]
+            hq_city = comp_attrs.get("headquarters", {}).get("city", "")
+            # Find the closest matching city node
+            for city_key in node_keys[3]:
+                if G.nodes[city_key].get("name") == hq_city:
+                    G.add_edge(f"CarManufacturer_{i}", city_key, edge_type="headquarters")
+                    break
 
-        # 1. Company → City (headquarters): each company links to a city
-        for i, company in enumerate(COMPANIES):
-            if i < len(node_keys[0]):
-                G.add_edge(f"CarManufacturer_{i}", f"City_{i % len(node_keys[3])}",
-                           edge_type="headquarters")
-
-        # 2. Company → CarModel (production): each company produces some car models
-        for ci, company in enumerate(COMPANIES):
-            # Each company produces 1-3 models
+        # =====================================================================
+        # Edge Layer 2: Company → CarModel (produces)
+        # Each company produces 1-3 models.
+        # =====================================================================
+        for ci in range(len(COMPANIES)):
             num_models = min(len(CARS) // len(COMPANIES) + 1, 3)
             start = ci * num_models
             for j in range(num_models):
@@ -234,7 +269,10 @@ def demo4():
                 G.add_edge(f"CarManufacturer_{ci}", f"CarModel_{car_idx}",
                            edge_type="produces")
 
-        # 3. OwnerProfile → CarModel (ownership): each owner owns 1-2 cars
+        # =====================================================================
+        # Edge Layer 3: OwnerProfile → CarModel (owns)
+        # Each owner owns 1-2 cars.
+        # =====================================================================
         for oi in range(len(node_keys[2])):
             num_cars = 1 if oi % 3 != 0 else 2
             for c in range(num_cars):
@@ -242,18 +280,159 @@ def demo4():
                 G.add_edge(f"OwnerProfile_{oi}", f"CarModel_{car_idx}",
                            edge_type="owns")
 
+        # =====================================================================
+        # Edge Layer 4: CarModel → City (sold_in)
+        # Each car is sold in 3 cities. Deterministic selection via RNG.
+        # =====================================================================
+        for car_idx in range(len(node_keys[1])):
+            sold_cities = rng.sample(node_keys[3], min(3, len(node_keys[3])))
+            for city_key in sold_cities:
+                G.add_edge(f"CarModel_{car_idx}", city_key, edge_type="sold_in")
+
+        # =====================================================================
+        # Edge Layer 5: OwnerProfile → City (resides_in)
+        # Each owner lives in one randomly assigned city.
+        # =====================================================================
+        for oi in range(len(node_keys[2])):
+            city_key = rng.choice(node_keys[3])
+            G.add_edge(f"OwnerProfile_{oi}", city_key, edge_type="resides_in")
+
+        # =====================================================================
+        # Edge Layer 6: CarModel ↔ CarModel (competes_with)
+        # Cars of the same type connect to their 3 closest by horsepower.
+        # Bidirectional = 2 directed edges per connection.
+        # =====================================================================
+        car_types = {}
+        for idx in range(len(node_keys[1])):
+            car_type = G.nodes[node_keys[1][idx]].get("type", "unknown")
+            car_types.setdefault(car_type, []).append(idx)
+
+        for car_type, indices in car_types.items():
+            # Sort by horsepower for deterministic nearest-neighbor selection
+            sorted_indices = sorted(indices,
+                                    key=lambda i: G.nodes[node_keys[1][i]]["horsepower"])
+            for pos, idx in enumerate(sorted_indices):
+                # Connect to up to 3 nearest neighbors (same type, closest HP)
+                candidates = []
+                for offset in [1, 2, 3]:
+                    if pos + offset < len(sorted_indices):
+                        candidates.append(sorted_indices[pos + offset])
+                    if pos - offset >= 0:
+                        candidates.insert(0, sorted_indices[pos - offset])
+                for cand in candidates[:3]:
+                    G.add_edge(node_keys[1][idx], node_keys[1][cand],
+                               edge_type="competes_with")
+
+        # =====================================================================
+        # Edge Layer 7: OwnerProfile ↔ OwnerProfile (shares_hobby)
+        # Owners with ≥1 overlapping hobby connect to 3 most similar peers.
+        # Bidirectional = 2 directed edges per connection.
+        # =====================================================================
+        owner_hobbies = {}
+        for oi in range(len(node_keys[2])):
+            hobbies_set = set(G.nodes[node_keys[2][oi]].get("hobbies", []))
+            owner_hobbies[oi] = hobbies_set
+
+        for oi in range(len(node_keys[2])):
+            my_hobbies = owner_hobbies[oi]
+            if not my_hobbies:
+                continue
+            # Score other owners by shared hobby count
+            scores = []
+            for oj in range(len(node_keys[2])):
+                if oj == oi:
+                    continue
+                shared = len(my_hobbies & owner_hobbies[oj])
+                if shared > 0:
+                    scores.append((shared, oj))
+            # Sort by shared count desc, then by index for determinism
+            scores.sort(key=lambda x: (-x[0], x[1]))
+            for _, oj in scores[:3]:
+                shared = my_hobbies & owner_hobbies[oj]
+                G.add_edge(f"OwnerProfile_{oi}", f"OwnerProfile_{oj}",
+                           edge_type="shares_hobby",
+                           shared_hobbies=sorted(shared))
+
+        # =====================================================================
+        # Edge Layer 8: City ↔ City (neighboring_country)
+        # Cities in the same country connect to 3 nearest by population rank.
+        # Bidirectional = 2 directed edges per connection.
+        # =====================================================================
+        cities_by_country = {}
+        for ci in range(len(node_keys[3])):
+            country = G.nodes[node_keys[3][ci]].get("country", "")
+            cities_by_country.setdefault(country, []).append(ci)
+
+        for country, indices in cities_by_country.items():
+            sorted_indices = sorted(indices,
+                                    key=lambda i: G.nodes[node_keys[3][i]]["population"])
+            for pos, ci in enumerate(sorted_indices):
+                candidates = []
+                for offset in [1, 2, 3]:
+                    if pos + offset < len(sorted_indices):
+                        candidates.append(sorted_indices[pos + offset])
+                    if pos - offset >= 0:
+                        candidates.insert(0, sorted_indices[pos - offset])
+                for cand in candidates[:3]:
+                    G.add_edge(node_keys[3][ci], node_keys[3][cand],
+                               edge_type="neighboring_country")
+
+        # =====================================================================
+        # Edge Layer 9: CarManufacturer ↔ CarManufacturer (same_hq)
+        # Companies in the same city connect to each other.
+        # =====================================================================
+        hq_cities = {}
+        for ci in range(len(node_keys[0])):
+            hq_city = G.nodes[node_keys[0][ci]].get("headquarters", {}).get("city", "")
+            hq_cities.setdefault(hq_city, []).append(ci)
+
+        for city, indices in hq_cities.items():
+            if len(indices) < 2:
+                continue
+            for i in range(len(indices)):
+                for j in range(i + 1, len(indices)):
+                    G.add_edge(node_keys[0][indices[i]],
+                               node_keys[0][indices[j]],
+                               edge_type="same_hq")
+
+        # =====================================================================
+        # Summary
+        # =====================================================================
         print(f"Graph: {G.name}")
         print(f"Nodes: {G.number_of_nodes()}")
         print(f"Edges: {G.number_of_edges()}")
 
-        # Print sample of each type
+        # Count edges by type
+        edge_types = {}
+        for u, v, data in G.edges(data=True):
+            etype = data.get("edge_type", "unknown")
+            edge_types[etype] = edge_types.get(etype, 0) + 1
+        print(f"\nEdge breakdown:")
+        for etype, count in sorted(edge_types.items()):
+            print(f"  {etype}: {count}")
+
+        # Print sample of each node type
         samples_per_type = 2
         for label, count, gen in zip(labels, node_counts, generators):
-            matching = [n for n in G.nodes(data=True) if n[1].get("entity_type") == label]
-            sampled = random.sample(matching, min(samples_per_type, len(matching)))
+            matching = [(n, d) for n, d in G.nodes(data=True)
+                        if d.get("entity_type") == label]
+            sampled = rng.sample(matching, min(samples_per_type, len(matching)))
             print(f"\n--- {label} (sample of {min(samples_per_type, count)}) ---")
-            for node, data in sampled:
+            for node, data in sorted(sampled, key=lambda x: x[0]):
                 print(f"  {data}")
+
+        # Print sample edges per layer
+        print("\n--- Sample edges by type ---")
+        for etype in ["headquarters", "produces", "owns", "sold_in",
+                       "resides_in", "competes_with", "shares_hobby",
+                       "neighboring_country", "same_hq"]:
+            edges_of_type = [(u, v, d) for u, v, d in G.edges(data=True)
+                             if d.get("edge_type") == etype]
+            if edges_of_type:
+                sample = rng.sample(edges_of_type, min(3, len(edges_of_type)))
+                print(f"\n  {etype} (sample of {len(sample)}):")
+                for u, v, d in sorted(sample):
+                    print(f"    {u} → {v}  |  {d}")
 
         session.commit()
 
