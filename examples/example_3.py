@@ -1,4 +1,5 @@
-"""Example 6 – generate a car-ecosystem graph and visualise it.
+"""
+Example 3 – generate a car-ecosystem graph and visualise it.
 
 Deterministic graph generation (SEED=23) with exactly:
   - 10 CarManufacturer nodes
@@ -14,7 +15,7 @@ Edges (4 types only):
 
 No community detection – pure force-directed layout.
 
-Output: example_6_graph.png (deterministic every run).
+Output: example_3_graph.png (deterministic every run).
 """
 
 import os
@@ -36,8 +37,8 @@ from nx_sql.models import Base
 SEED = 23
 
 _DIR = os.path.abspath(os.path.dirname(__file__))
-DB_PATH = os.path.join(_DIR, "..", "example_6.db")
-OUTPUT_PNG = os.path.join(_DIR, "example_6_graph.png")
+DB_PATH = os.path.join(_DIR, "..", "example_3.db")
+OUTPUT_PNG = os.path.join(_DIR, "example_3_graph.png")
 
 EDGE_STYLES = {
     "produces":  ("#10B981", 0.35, 1.2),
