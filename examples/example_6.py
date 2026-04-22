@@ -1,6 +1,6 @@
 """Example 6 – generate a car-ecosystem graph and visualise it.
 
-Deterministic graph generation (SEED=42) with exactly:
+Deterministic graph generation (SEED=23) with exactly:
   - 10 CarManufacturer nodes
   - 100 CarModel nodes (10 per manufacturer)
   - 100 OwnerProfile nodes
@@ -211,8 +211,218 @@ OCCUPATIONS = [
     "Music Producer", "Athlete", "Personal Trainer", "Veterinarian",
 ]
 
-def main():
-    # ...
+def main() -> None:
+    random.seed(SEED)
+    np.random.seed(SEED)
+
+    # --- DB setup -----------------------------------------------------------
+    engine = create_engine(f"sqlite:///{DB_PATH}")
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine)
+
+    with Session() as session:
+        # Create nx_sql graph
+        G = nx_sql.Graph(session=session, name="car_ecosystem")
+
+        # --- Create nodes -----------------------------------------------------
+        # CarManufacturer nodes (by company name)
+        manufacturers: dict[str, str] = {}  # name -> node_key
+        for name, data in zip(COMPANY_NAMES, COMPANY_DATA):
+            G.add_node(name, label=name, type="manufacturer", **data)
+            manufacturers[name] = name
+
+        # CarModel nodes (name as key, with attributes from templates)
+        car_models: dict[str, str] = {}  # node_key -> manufacturer_name
+        for mfr_name in COMPANY_NAMES:
+            for template in CAR_TEMPLATES[mfr_name]:
+                model_name, body_type, engine_type, hp, torque, weight = template
+                node_key = f"{mfr_name} {model_name}"
+                G.add_node(
+                    node_key,
+                    label=model_name,
+                    type="car_model",
+                    manufacturer=mfr_name,
+                    body_type=body_type,
+                    engine_type=engine_type,
+                    hp=hp,
+                    torque=torque,
+                    weight_kg=weight,
+                )
+                car_models[node_key] = mfr_name
+
+        # City nodes
+        cities: dict[str, str] = {}  # name -> node_key
+        for city_data in CITIES:
+            city_name = city_data[0]
+            G.add_node(
+                city_name,
+                label=city_name,
+                type="city",
+                country=city_data[1],
+                timezone=city_data[2],
+                population=city_data[3],
+                climate=city_data[4],
+            )
+            cities[city_name] = city_name
+
+        # OwnerProfile nodes
+        owners: list[str] = []  # node keys in order
+        for i in range(100):
+            owner_key = f"Owner_{i:03d}"
+            home_city = random.choice(CITIES)[0]
+            work_city = random.choice(CITIES)[0]
+            occupation = random.choice(OCCUPATIONS)
+            G.add_node(
+                owner_key,
+                label=owner_key,
+                type="owner",
+                occupation=occupation,
+                home_city=home_city,
+                work_city=work_city,
+            )
+            owners.append(owner_key)
+
+        # --- Create edges -----------------------------------------------------
+        # produces: CarManufacturer → CarModel (10 per manufacturer)
+        for mfr_name in COMPANY_NAMES:
+            for template in CAR_TEMPLATES[mfr_name]:
+                model_name = template[0]
+                node_key = f"{mfr_name} {model_name}"
+                G.add_edge(
+                    mfr_name,
+                    node_key,
+                    edge_type="produces",
+                )
+
+        # resides_in + works_in: OwnerProfile → City
+        for owner_key in owners:
+            owner_attrs = G._node[owner_key]
+            home_city = owner_attrs.get("home_city", "Toyota City")
+            work_city = owner_attrs.get("work_city", "Toyota City")
+            G.add_edge(
+                owner_key,
+                home_city,
+                edge_type="resides_in",
+            )
+            G.add_edge(
+                owner_key,
+                work_city,
+                edge_type="works_in",
+            )
+
+        # owns: OwnerProfile → CarModel (1-2 per owner)
+        all_model_keys = list(car_models.keys())
+        for owner_key in owners:
+            n_cars = random.randint(1, 2)
+            chosen = random.sample(all_model_keys, min(n_cars, len(all_model_keys)))
+            for model_key in chosen:
+                G.add_edge(
+                    owner_key,
+                    model_key,
+                    edge_type="owns",
+                )
+
+        session.commit()
+
+    # --- Visualise ----------------------------------------------------------
+    pos = nx.spring_layout(G, seed=SEED, k=0.5, iterations=50)
+
+    fig, ax = plt.subplots(figsize=(24, 18))
+
+    # Colour map by node type
+    type_colors = {
+        "manufacturer": "#10B981",
+        "car_model": "#3B82F6",
+        "owner": "#F59E0B",
+        "city": "#EC4899",
+    }
+
+    node_types = {
+        n: G.nodes[n].get("type", "unknown") for n in G.nodes
+    }
+
+    # Draw edges by type
+    for edge_type, (color, alpha, width) in EDGE_STYLES.items():
+        edges_by_type = [
+            (u, v) for u, v, d in G.edges(data=True)
+            if d.get("edge_type") == edge_type
+        ]
+        if edges_by_type:
+            nx.draw_networkx_edges(
+                G, pos,
+                edgelist=edges_by_type,
+                edge_color=color,
+                alpha=alpha,
+                width=width,
+                style="dashed",
+                ax=ax,
+            )
+
+    # Draw nodes grouped by type
+    for ntype, color in type_colors.items():
+        nodes_of_type = [n for n, t in node_types.items() if t == ntype]
+        if nodes_of_type:
+            nx.draw_networkx_nodes(
+                G, pos,
+                nodelist=nodes_of_type,
+                node_color=color,
+                node_size=120 if ntype == "car_model" else 300,
+                alpha=0.85,
+                ax=ax,
+            )
+
+    # Labels: only manufacturers and cities (too many cars/owners to label)
+    label_nodes = [
+        n for n, t in node_types.items()
+        if t in ("manufacturer", "city")
+    ]
+    nx.draw_networkx_labels(
+        G, pos,
+        labels={n: G.nodes[n].get("label", n) for n in label_nodes},
+        font_size=8,
+        font_weight="bold",
+        ax=ax,
+    )
+
+    # Legend
+    legend_handles = []
+
+    # Node type legend entries
+    for ntype, color in type_colors.items():
+        legend_handles.append(
+            mpatches.Patch(color=color, label=ntype.replace("_", " ").title())
+        )
+
+    # Edge type legend entries (dashed lines)
+    for edge_type, (color, alpha, width) in EDGE_STYLES.items():
+        legend_handles.append(
+            plt.Line2D(
+                [], [],
+                color=color,
+                linestyle="--",
+                linewidth=width,
+                label=edge_type.replace("_", " ").title(),
+            )
+        )
+
+    ax.legend(handles=legend_handles, loc="upper right", fontsize=10, framealpha=0.9)
+
+    ax.set_axis_off()
+    ax.set_title(
+        "Car Ecosystem Graph\n"
+        f"10 manufacturers · 100 car models · 100 owners · 10 cities",
+        fontsize=16,
+        fontweight="bold",
+        pad=20,
+    )
+
+    fig.savefig(OUTPUT_PNG, dpi=150, bbox_inches="tight", facecolor="white")
+    plt.close(fig)
+    print(f"Graph saved → {OUTPUT_PNG}")
+    print(
+        f"  Nodes: {G.number_of_nodes()}  "
+        f"Edges: {G.number_of_edges()}"
+    )
 
 if __name__ == "__main__":
     main()
