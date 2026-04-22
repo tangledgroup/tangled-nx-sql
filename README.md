@@ -291,7 +291,7 @@ Three tables with JSON attribute columns:
 ```bash
 uv run python -B examples/example_0.py   # shortest path on directed graphs
 uv run python -B examples/example_1.py   # arbitrary node types (NumPy arrays)
-uv run python -B examples/example2.py    # random graph generation + plotting
+uv run python -B examples/example_2.py   # random graph generation + plotting
 ```
 
 Full example suite: [examples/](examples/) — 93 runnable scripts covering algorithms, drawing, geospatial, graphviz, and subclassing.
