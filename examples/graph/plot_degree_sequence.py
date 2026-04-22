@@ -4,6 +4,8 @@ Mirrors networkx/examples/graph/plot_degree_sequence.py but uses
 SQLAlchemy persistence. Tests configuration model and degree histogram.
 """
 
+from collections import Counter
+
 import networkx as nx
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
@@ -54,7 +56,6 @@ def demo_degree_sequence():
         print(f"Degree sequence matches input: {match}")
 
         # Degree histogram
-        from collections import Counter
         degree_counts = Counter(actual_degrees)
         print("\nDegree histogram:")
         for deg in sorted(degree_counts.keys()):

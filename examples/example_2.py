@@ -5,6 +5,8 @@ running algorithms, and rendering a visual plot.
 """
 
 import matplotlib
+from matplotlib.lines import Line2D
+
 matplotlib.use("Agg")
 
 import matplotlib.pyplot as plt
@@ -97,7 +99,6 @@ def demo_davis_southern_women():
         nx.draw_networkx_labels(G, pos, font_size=9, font_family="sans-serif", ax=ax)
 
         # Legend for communities
-        from matplotlib.lines import Line2D
         legend_elements = [Line2D([0], [0], marker='o', color='w',
                                   markerfacecolor=palette[i % len(palette)],
                                   markersize=8, label=f'Community {i}')

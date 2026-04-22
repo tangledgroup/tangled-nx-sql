@@ -7,6 +7,8 @@ and spectral clustering for bi-partitioning.
 No matplotlib/3D plots — all analysis printed as text.
 """
 
+from collections import Counter
+
 import numpy as np
 import networkx as nx
 from sklearn.cluster import SpectralClustering
@@ -14,7 +16,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 import nx_sql
-from nx_sql.models import Base
+from nx_sql.models import Base, Graph as GraphModel
 import sys; sys.path.insert(0, str(__import__('pathlib').Path(__file__).resolve().parent.parent.parent))
 from examples.utils import print_docstring
 
@@ -156,7 +158,6 @@ def demo_image_segmentation():
 
         # Degree distribution
         degrees = [d for _, d in G.degree()]
-        from collections import Counter
         degree_counts = Counter(degrees)
         print(f"\nDegree distribution:")
         for deg in sorted(degree_counts.keys())[:10]:
@@ -202,7 +203,6 @@ def demo_image_segmentation():
 
     # --- Reload from DB and verify ---
     with Session() as session:
-        from nx_sql.models import Graph as GraphModel
         gmodel = session.execute(
             nx_sql.select(GraphModel).where(GraphModel.name == "spectral_clustering_demo")
         ).scalar_one()

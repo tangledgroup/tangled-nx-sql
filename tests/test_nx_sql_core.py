@@ -4,8 +4,11 @@ from __future__ import annotations
 
 import pytest
 import numpy as np
+from sqlalchemy import select
+
 import nx_sql
-from nx_sql.nx_sql import _to_hashable, _db_node_key
+from nx_sql.models import Graph as GraphModel
+from nx_sql.nx_sql import _to_hashable, _db_node_key, DiGraph, Graph, MultiGraph, MultiDiGraph
 
 
 # =============================================================================
@@ -115,7 +118,6 @@ class TestGraphOperations:
         G.delete()
 
         # Graph should be gone
-        from nx_sql.models import Graph as GraphModel
         result = session.scalar(select(GraphModel).where(GraphModel.graph_id == gid))
         assert result is None
 
@@ -184,21 +186,16 @@ class TestImport:
     """Tests for module imports and exports."""
 
     def test_import_graph(self):
-        from nx_sql import Graph
         assert Graph is not None
 
     def test_import_digraph(self):
-        from nx_sql import DiGraph
         assert DiGraph is not None
 
     def test_import_multigraph(self):
-        from nx_sql import MultiGraph
         assert MultiGraph is not None
 
     def test_import_multidigraph(self):
-        from nx_sql import MultiDiGraph
         assert MultiDiGraph is not None
 
 
-# Need to import select for delete test
-from sqlalchemy import select
+

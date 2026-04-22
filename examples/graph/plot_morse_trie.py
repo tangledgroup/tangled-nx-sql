@@ -10,7 +10,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 import nx_sql
-from nx_sql.models import Base
+from nx_sql.models import Base, Graph as GraphModel
 import sys; sys.path.insert(0, str(__import__('pathlib').Path(__file__).resolve().parent.parent.parent))
 from examples.utils import print_docstring
 
@@ -140,7 +140,6 @@ def demo_morse_trie():
 
     # Verify persistence
     with Session() as session:
-        from nx_sql.models import Graph as GraphModel
         gmodel = session.execute(
             nx_sql.select(GraphModel).where(GraphModel.name == "morse_trie_demo")
         ).scalar_one()

@@ -49,7 +49,6 @@ def demo_karate_club():
 
         # Degree distribution
         degrees = [d for n, d in G.degree()]
-        from collections import Counter
         degree_counts = Counter(degrees)
         print("\nDegree distribution:")
         for deg in sorted(degree_counts.keys()):
@@ -60,7 +59,6 @@ def demo_karate_club():
 
     # Verify persistence
     with Session() as session:
-        from nx_sql.models import Graph as GraphModel
         gmodel = session.execute(
             nx_sql.select(GraphModel).where(GraphModel.name == "karate_club_demo")
         ).scalar_one()

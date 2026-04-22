@@ -2396,7 +2396,7 @@
       <data key="d9">[88597544, 417396858, 255330068]</data>
       <data key="d10">secondary</data>
       <data key="d11">4</data>
-      <data key="d12">['3rd Street', 'Kearny Street']</data>
+      <data key="d12">['Kearny Street', '3rd Street']</data>
       <data key="d13">True</data>
       <data key="d14">False</data>
       <data key="d15">116.92503672132801</data>
@@ -2547,7 +2547,7 @@
     <edge source="65303538" target="6378899319" id="0">
       <data key="d9">[28841120, 721174654]</data>
       <data key="d10">tertiary</data>
-      <data key="d11">['5', '3']</data>
+      <data key="d11">['3', '5']</data>
       <data key="d12">Sutter Street</data>
       <data key="d13">True</data>
       <data key="d14">False</data>
@@ -2635,7 +2635,7 @@
     <edge source="65319933" target="65328705" id="0">
       <data key="d9">[1041351160, 1041351161]</data>
       <data key="d10">residential</data>
-      <data key="d11">['2', '1']</data>
+      <data key="d11">['1', '2']</data>
       <data key="d12">Grant Avenue</data>
       <data key="d13">True</data>
       <data key="d14">False</data>
@@ -3517,7 +3517,7 @@
     <edge source="65328707" target="65328710" id="0">
       <data key="d9">[425516616, 1041363480]</data>
       <data key="d10">residential</data>
-      <data key="d11">['2', '1']</data>
+      <data key="d11">['1', '2']</data>
       <data key="d12">Grant Avenue</data>
       <data key="d13">True</data>
       <data key="d14">False</data>
@@ -3543,7 +3543,7 @@
     <edge source="65307376" target="6378899315" id="0">
       <data key="d9">[8921866, 681183503, 417099350, 397146711, 397146712]</data>
       <data key="d10">tertiary</data>
-      <data key="d11">['2', '3', '4']</data>
+      <data key="d11">['3', '2', '4']</data>
       <data key="d12">['Stockton Street', 'Stockton Tunnel']</data>
       <data key="d13">False</data>
       <data key="d14">[False, True]</data>
@@ -4434,7 +4434,7 @@
       <data key="d9">[981636499, 408590436, 163784093]</data>
       <data key="d10">secondary</data>
       <data key="d11">2</data>
-      <data key="d12">["O'Farrell Street", 'Grant Avenue']</data>
+      <data key="d12">['Grant Avenue', "O'Farrell Street"]</data>
       <data key="d13">True</data>
       <data key="d14">False</data>
       <data key="d15">243.6130530558958</data>
@@ -4447,7 +4447,7 @@
       <data key="d9">[225806055, 225806056, 777343790, 934194966, 89782522, 1024537343]</data>
       <data key="d10">tertiary</data>
       <data key="d11">['3', '2', '4']</data>
-      <data key="d12">['4th Street', 'Stockton Street']</data>
+      <data key="d12">['Stockton Street', '4th Street']</data>
       <data key="d13">True</data>
       <data key="d14">False</data>
       <data key="d15">234.76740901844494</data>
@@ -5177,7 +5177,7 @@
     <edge source="65343960" target="65333814" id="0">
       <data key="d9">[1112271465, 1112271466]</data>
       <data key="d10">secondary</data>
-      <data key="d11">['2', '1']</data>
+      <data key="d11">['1', '2']</data>
       <data key="d12">Taylor Street</data>
       <data key="d13">True</data>
       <data key="d14">False</data>
@@ -5242,7 +5242,7 @@
     <edge source="65328710" target="65328712" id="0">
       <data key="d9">[1041363477, 1041363478]</data>
       <data key="d10">residential</data>
-      <data key="d11">['2', '1']</data>
+      <data key="d11">['1', '2']</data>
       <data key="d12">Grant Avenue</data>
       <data key="d13">True</data>
       <data key="d14">False</data>
@@ -5339,7 +5339,7 @@
     <edge source="65337385" target="65337383" id="0">
       <data key="d9">[1483125884, 417101710]</data>
       <data key="d10">tertiary</data>
-      <data key="d11">['2', '1']</data>
+      <data key="d11">['1', '2']</data>
       <data key="d12">Jackson Street</data>
       <data key="d13">True</data>
       <data key="d14">False</data>
@@ -6155,7 +6155,7 @@
     <edge source="65337399" target="65328716" id="0">
       <data key="d9">[425516630, 706527718]</data>
       <data key="d10">tertiary</data>
-      <data key="d11">['2', '1']</data>
+      <data key="d11">['1', '2']</data>
       <data key="d12">Jackson Street</data>
       <data key="d13">True</data>
       <data key="d14">False</data>
@@ -6802,7 +6802,7 @@
       <data key="d17">32.57932195121951</data>
       <data key="d18">14.248356316744056</data>
     </edge>
-    <data key="d0">2026-04-21 17:08:25</data>
+    <data key="d0">2026-04-22 10:06:01</data>
     <data key="d1">OSMnx 2.1.0</data>
     <data key="d2">epsg:4326</data>
     <data key="d3">True</data>

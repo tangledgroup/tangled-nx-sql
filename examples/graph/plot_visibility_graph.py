@@ -5,6 +5,8 @@ SQLAlchemy persistence. Tests constructing a visibility graph where nodes
 are connected if they have line-of-sight in the time series plot.
 """
 
+from collections import Counter
+
 import networkx as nx
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
@@ -88,7 +90,6 @@ def demo_visibility_graph():
         # Analyze degree distribution
         print("\n=== Degree Analysis ===")
         degrees = [d for _, d in G.degree()]
-        from collections import Counter
         degree_counts = Counter(degrees)
         for deg in sorted(degree_counts.keys()):
             bar = "#" * degree_counts[deg]

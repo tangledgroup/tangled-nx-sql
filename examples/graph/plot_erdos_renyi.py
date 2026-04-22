@@ -4,6 +4,8 @@ Mirrors networkx/examples/graph/plot_erdos_renyi.py but uses
 SQLAlchemy persistence. Tests gnm_random_graph properties.
 """
 
+from collections import Counter
+
 import networkx as nx
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
@@ -60,7 +62,6 @@ def demo_erdos_renyi():
             print(f"  {i}: {sorted(neighbors)}")
 
         # Degree histogram
-        from collections import Counter
         degree_counts = Counter(degrees)
         print("\nDegree histogram:")
         for deg in sorted(degree_counts.keys()):

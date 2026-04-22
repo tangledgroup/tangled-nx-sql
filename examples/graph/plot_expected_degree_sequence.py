@@ -4,6 +4,8 @@ Mirrors networkx/examples/graph/plot_expected_degree_sequence.py but uses
 SQLAlchemy persistence. Tests expected_degree_graph and degree histogram.
 """
 
+from collections import Counter
+
 import networkx as nx
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
@@ -42,7 +44,6 @@ def demo_expected_degree_sequence():
 
         # Degree histogram
         degrees = [d for _, d in G.degree()]
-        from collections import Counter
         degree_counts = Counter(degrees)
 
         print("\nDegree histogram")

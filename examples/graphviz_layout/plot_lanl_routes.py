@@ -9,6 +9,8 @@ Adapted for nx_sql — uses pydot/spring layout as fallback when
 graphviz CLI is unavailable.
 """
 
+import random
+
 import matplotlib.pyplot as plt
 import networkx as nx
 from sqlalchemy import create_engine
@@ -43,12 +45,10 @@ def demo_lanl_routes():
         while not nx.is_connected(G_nx):
             G_nx = nx.random_regular_graph(3, 186, seed=None)
 
+        # Assign rtt-like attributes
         G = nx_sql.Graph(session, name="lanl_routes_demo")
         G.add_nodes_from(G_nx.nodes())
         G.add_edges_from(G_nx.edges())
-
-        # Assign rtt-like attributes
-        import random
         for n in G:
             G.add_node(n, rtt=random.random())
 

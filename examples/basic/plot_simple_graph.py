@@ -9,7 +9,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 import nx_sql
-from nx_sql.models import Base
+from nx_sql.models import Base, Graph as GraphModel
 import sys; sys.path.insert(0, str(__import__('pathlib').Path(__file__).resolve().parent.parent.parent))
 from examples.utils import print_docstring
 
@@ -61,7 +61,6 @@ def demo_simple_graph():
     # Verify persistence: load the graph in a new session
     with Session() as session:
         # Find the graph by name
-        from nx_sql.models import Graph as GraphModel
         gmodel = session.execute(
             nx_sql.select(GraphModel).where(GraphModel.name == "simple_graph_demo")
         ).scalar_one()

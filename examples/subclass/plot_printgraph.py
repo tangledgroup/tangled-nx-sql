@@ -14,9 +14,10 @@ from networkx import Graph
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
+import sys
+
 import nx_sql
 from nx_sql.models import Base
-import sys; sys.path.insert(0, str(__import__('pathlib').Path(__file__).resolve().parent.parent.parent))
 from examples.utils import print_docstring
 
 engine = create_engine("sqlite:///nx_sql.db")
@@ -30,7 +31,6 @@ class PrintGraph(Graph):
     def __init__(self, data=None, name="", file=None, **attr):
         super().__init__(data=data, name=name, **attr)
         if file is None:
-            import sys
             self.fh = sys.stdout
         else:
             self.fh = open(file, "w")
