@@ -1658,7 +1658,7 @@ wheels = [
 
 [[package]]
 name = "tangled-nx-sql"
-version = "0.1.0"
+version = "0.1.1a0"
 source = { virtual = "." }
 dependencies = [
     { name = "networkx", extra = ["default"] },
