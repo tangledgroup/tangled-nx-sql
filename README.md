@@ -110,6 +110,104 @@ with Session() as session:
     session.commit()
 ```
 
+### Generate, analyze, and draw a random graph
+
+```python
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+import networkx as nx
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+
+import nx_sql
+from nx_sql.models import Base
+
+engine = create_engine("sqlite:///my_graph.db")
+Base.metadata.create_all(engine)
+Session = sessionmaker(bind=engine)
+
+with Session() as session:
+    # Generate a random graph and persist it to SQL
+    G_nx = nx.erdos_renyi_graph(20, 0.15, seed=42)
+    G = nx_sql.Graph(session, name="random_graph")
+    G.add_nodes_from(G_nx.nodes())
+    G.add_edges_from(G_nx.edges())
+
+    # Compute statistics against the database-backed graph
+    print(f"Nodes: {G.number_of_nodes()}")
+    print(f"Edges: {G.number_of_edges()}")
+    print(f"Avg degree: {sum(dict(G.degree()).values()) / G.number_of_nodes():.2f}")
+
+    # Draw with color-coded node degrees
+    pos = nx.spring_layout(G, seed=42, k=0.5)
+    degrees = [d for _, d in G.degree()]
+    cmap = plt.cm.viridis
+    node_colors = [d / max(degrees) for d in degrees]
+
+    fig, ax = plt.subplots(figsize=(10, 8))
+    nx.draw_networkx_nodes(G, pos, node_color=node_colors, cmap=cmap,
+                           node_size=200, alpha=0.9, ax=ax)
+    nx.draw_networkx_edges(G, pos, width=1.0, alpha=0.5, ax=ax)
+    nx.draw_networkx_labels(G, pos, font_size=8, ax=ax)
+    ax.set_title("Erdős-Rényi Random Graph", fontsize=14)
+    ax.axis("off")
+    plt.savefig("random_graph.png", dpi=150, bbox_inches="tight")
+    plt.close()
+
+    session.commit()
+```
+
+### Social network with community detection
+
+```python
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+import networkx as nx
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+
+import nx_sql
+from nx_sql.models import Base
+
+engine = create_engine("sqlite:///my_graph.db")
+Base.metadata.create_all(engine)
+Session = sessionmaker(bind=engine)
+
+with Session() as session:
+    # Load a real-world social network
+    G_nx = nx.davis_southern_women_graph()
+    G = nx_sql.Graph(session, name="social_network")
+    G.add_nodes_from(G_nx.nodes())
+    G.add_edges_from(G_nx.edges())
+
+    # Detect communities
+    communities = nx.community.greedy_modularity_communities(G)
+    print(f"Communities: {len(communities)}")
+
+    # Color nodes by community
+    palette = ["#e41a1c", "#377eb8", "#4daf4a"]
+    color_map = {}
+    for i, comm in enumerate(communities):
+        for node in comm:
+            color_map[node] = palette[i % len(palette)]
+
+    pos = nx.spring_layout(G, seed=1430)
+    fig, ax = plt.subplots(figsize=(12, 10))
+    nx.draw_networkx_nodes(G, pos,
+                           node_color=[color_map[n] for n in G.nodes()],
+                           node_size=300, alpha=0.85, ax=ax)
+    nx.draw_networkx_edges(G, pos, width=1.5, alpha=0.6, ax=ax)
+    nx.draw_networkx_labels(G, pos, font_size=9, ax=ax)
+    ax.set_title("Davis Southern Women Network", fontsize=14)
+    ax.axis("off")
+    plt.savefig("social_network.png", dpi=150, bbox_inches="tight")
+    plt.close()
+
+    session.commit()
+```
+
 ## API Reference
 
 ### Graph classes
@@ -191,8 +289,9 @@ Three tables with JSON attribute columns:
 ## Running the examples
 
 ```bash
-uv run python -B examples/example_0.py   # shortest path demos
-uv run python -B examples/example_1.py   # arbitrary node key demo
+uv run python -B examples/example_0.py   # shortest path on directed graphs
+uv run python -B examples/example_1.py   # arbitrary node types (NumPy arrays)
+uv run python -B examples/example2.py    # random graph generation + plotting
 ```
 
-Full example suite: [examples/](examples/) — 92 runnable scripts covering algorithms, drawing, geospatial, graphviz, and subclassing.
+Full example suite: [examples/](examples/) — 93 runnable scripts covering algorithms, drawing, geospatial, graphviz, and subclassing.
