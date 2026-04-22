@@ -44,6 +44,7 @@ dev = [
     "momepy>=0.11.0",
     "osmnx>=2.1.0",
     "pytest>=9.0.3",
+    "python-louvain>=0.16",
 ]
 
 [tool.setuptools.packages.find]
